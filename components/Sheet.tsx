@@ -1,52 +1,78 @@
-import { Suspense } from 'react'
+'use client'
+
+import type { ReactNode } from 'react'
 import {
   blockers,
   completeness,
-  itemState,
-  STATUS_LABEL,
   uploadedTotal,
   unaccounted,
-  type Claim,
+  STATUS_LABEL,
 } from '@/lib/claim'
+import type { EngineState, SyncEngine } from '@/lib/engine'
 import { formatRupees } from '@/lib/money'
-import { DeadlineCountdown, DeadlineFallback } from './Deadline'
+import { AmountField, ItemRow } from './ItemRow'
+import { ConflictPanel, RolledBack } from './ConflictPanel'
 
 function longDate(iso: string) {
   return new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'long' })
 }
 
-function Tick() {
-  return (
-    <svg viewBox="0 0 14 14" width="9" height="9" aria-hidden="true">
-      <path
-        d="M2 7.4 5.3 10.6 12 3.6"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2.4"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  )
+/**
+ * What the sync state should say in one short line, in the top right.
+ *
+ * The rule it follows: never claim an edit is safe when it is only on
+ * this phone. "All changes saved" is a promise, and this app is built for
+ * a family who will close the tab in a corridor and believe it.
+ */
+function syncLine(state: EngineState): string {
+  if (!state.ready) return 'Opening your claim'
+  const waiting = state.queued.length
+  if (waiting > 0) {
+    const edits = `${waiting} ${waiting === 1 ? 'edit' : 'edits'}`
+    if (!state.online) return `${edits} waiting for signal`
+    if (state.syncing) return `Sending ${edits}`
+    return `${edits} waiting to send`
+  }
+  if (!state.online) return 'Offline. Everything here is saved on this phone'
+  if (state.syncing) return 'Saving'
+  return 'All changes saved'
 }
 
-export function CoverSheet({ claim }: { claim: Claim }) {
+export function Sheet({
+  engine,
+  state,
+  deviceId,
+  deadline,
+}: {
+  engine: SyncEngine
+  state: EngineState
+  deviceId: string
+  /**
+   * Rendered on the server, passed in from the page. The due date comes
+   * off the claim and prerenders with the sheet; the countdown is the one
+   * part that needs a real request, because a build cannot know what day
+   * it is when someone opens this.
+   */
+  deadline: ReactNode
+}) {
+  const { claim } = state
   const gap = unaccounted(claim)
   const uploaded = uploadedTotal(claim)
   const { done, total } = completeness(claim)
   const problems = blockers(claim)
-  const pendingUploads = claim.items
-    .flatMap((i) => i.docs)
-    .filter((d) => d.pending).length
 
   return (
     <div className="mx-auto w-full max-w-[52rem] px-5 pb-24 sm:px-8">
       <header className="flex items-baseline justify-between gap-4 py-6">
         <span className="font-serif text-[1.05rem] text-ink">ClaimKit</span>
-        <span className="text-[0.82rem] text-ink-soft">
-          {pendingUploads > 0
-            ? `${pendingUploads} upload${pendingUploads > 1 ? 's' : ''} waiting for signal`
-            : 'All changes saved'}
+        <span className="text-[0.82rem] text-ink-soft" aria-live="polite">
+          {syncLine(state)}
+          {/* Only once the outbox has been read, because whether storage
+              exists is not knowable during the server render, and saying
+              so one render early is a hydration mismatch. */}
+          {state.ready && !state.durable && (
+            <span className="text-ink-faint"> · this browser is not storing anything</span>
+          )}
         </span>
       </header>
 
@@ -81,10 +107,14 @@ export function CoverSheet({ claim }: { claim: Claim }) {
           </div>
 
           <dl className="shrink-0 text-[0.92rem] sm:text-right">
-            <div className="flex justify-between gap-6 sm:justify-end">
+            <div className="flex items-center justify-between gap-6 sm:justify-end">
               <dt className="text-ink-soft">Final bill</dt>
-              <dd className="money w-[7.5rem] sm:text-right">
-                {formatRupees(claim.finalBillPaise)}
+              <dd>
+                <AmountField
+                  label="Final hospital bill"
+                  value={claim.finalBillPaise}
+                  onSubmit={(paise) => paise !== null && void engine.setFinalBill(paise)}
+                />
               </dd>
             </div>
             <div className="mt-1.5 flex justify-between gap-6 sm:justify-end">
@@ -97,16 +127,20 @@ export function CoverSheet({ claim }: { claim: Claim }) {
         <hr className="my-7 border-0 border-t border-rule" />
 
         <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
-          <p>
-            <Suspense fallback={<DeadlineFallback claim={claim} />}>
-              <DeadlineCountdown claim={claim} />
-            </Suspense>
-          </p>
+          <p>{deadline}</p>
           <p className="text-[0.88rem] text-ink-soft">
             {claim.members.map((m) => m.name).join(', ')} can add to this claim
           </p>
         </div>
       </section>
+
+      <ConflictPanel
+        conflicts={state.conflicts}
+        claim={claim}
+        engine={engine}
+        deviceId={deviceId}
+      />
+      <RolledBack rejections={state.rejections} claim={claim} engine={engine} />
 
       {/* The ledger. Documents are rows on paper, not cards. */}
       <section className="mt-12">
@@ -131,59 +165,9 @@ export function CoverSheet({ claim }: { claim: Claim }) {
             </tr>
           </thead>
           <tbody>
-            {claim.items.map((item) => {
-              const state = itemState(item)
-              const amount = item.docs.reduce((a, d) => a + (d.amountPaise ?? 0), 0)
-              const pending = item.docs.some((d) => d.pending)
-              return (
-                <tr key={item.id}>
-                  <td>
-                    <div className="flex items-start gap-3">
-                      <span
-                        className={`mark ${
-                          state === 'complete'
-                            ? 'mark-done'
-                            : state === 'partial'
-                              ? 'mark-partial'
-                              : ''
-                        }`}
-                        aria-hidden="true"
-                      >
-                        {state === 'complete' && <Tick />}
-                      </span>
-                      <span>
-                        {item.label}
-                        <span className="sr-only">
-                          {state === 'complete'
-                            ? ', complete'
-                            : state === 'partial'
-                              ? ', incomplete'
-                              : ', nothing uploaded'}
-                        </span>
-                        {pending && (
-                          <span className="ml-2 text-[0.8rem] text-ink-faint">
-                            waiting for signal
-                          </span>
-                        )}
-                        <span className="mt-0.5 block text-[0.82rem] text-ink-faint sm:hidden">
-                          {describeFiles(item.docs.length, item.expected)}
-                        </span>
-                      </span>
-                    </div>
-                  </td>
-                  <td className="hidden text-[0.88rem] text-ink-soft sm:table-cell">
-                    {describeFiles(item.docs.length, item.expected)}
-                  </td>
-                  <td className="num">
-                    {item.kind === 'bill' ? (
-                      formatRupees(amount)
-                    ) : (
-                      <span className="text-ink-faint">&mdash;</span>
-                    )}
-                  </td>
-                </tr>
-              )
-            })}
+            {claim.items.map((item) => (
+              <ItemRow key={item.id} item={item} claim={claim} engine={engine} />
+            ))}
           </tbody>
         </table>
       </section>
@@ -207,24 +191,8 @@ export function CoverSheet({ claim }: { claim: Claim }) {
               </li>
             ))}
           </ul>
-
-          <div className="mt-7 flex flex-wrap gap-3">
-            <button className="btn" type="button">
-              Add documents
-            </button>
-            <button className="btn btn-quiet" type="button">
-              Export as one PDF
-            </button>
-          </div>
         </section>
       )}
     </div>
   )
-}
-
-function describeFiles(count: number, expected: number | null): string {
-  if (count === 0) return 'none yet'
-  if (expected === null) return `${count} ${count === 1 ? 'file' : 'files'}`
-  if (count < expected) return `${count} of ${expected}`
-  return `${count} ${count === 1 ? 'file' : 'files'}`
 }

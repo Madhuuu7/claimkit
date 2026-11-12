@@ -118,6 +118,14 @@ export class SimulatedNetwork implements Transport {
       options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)))
   }
 
+  /**
+   * The demo switch. A method rather than a bare assignment, so a React
+   * caller is not reaching into an object's innards to flip it.
+   */
+  setOnline(online: boolean): void {
+    this.online = online
+  }
+
   private async wire(): Promise<void> {
     if (this.latencyMs > 0) await this.sleep(this.latencyMs)
     // Checked after the delay as well as before: switching the network

@@ -121,7 +121,6 @@ export const demoClaim: Claim = {
           amountPaise: 6_200_00,
           uploadedBy: 'Madhura',
           uploadedAt: '2026-11-11T20:44:00Z',
-          pending: true,
         },
       ],
     },

@@ -192,10 +192,14 @@ export class IdbClaimStore implements ClaimStore {
  * for the session rather than refuse to open, so the caller falls back to
  * memory and can tell the family their queue will not survive a reload.
  */
-export function createStore(): { store: ClaimStore; durable: boolean } {
+export function createStore(name = DB_NAME): { store: ClaimStore; durable: boolean } {
   try {
-    if (typeof indexedDB === 'undefined') return { store: new MemoryClaimStore(), durable: false }
-    return { store: new IdbClaimStore(), durable: true }
+    if (typeof indexedDB === 'undefined') {
+      // Also the server render, where there is no browser storage and the
+      // first paint comes from the snapshot in the page.
+      return { store: new MemoryClaimStore(), durable: false }
+    }
+    return { store: new IdbClaimStore(name), durable: true }
   } catch {
     return { store: new MemoryClaimStore(), durable: false }
   }
