@@ -186,6 +186,20 @@ export function Sheet({
         </table>
       </section>
 
+      {uploads && (
+        <section className="mt-8">
+          <a
+            className="btn btn-quiet"
+            href={`/api/claims/${claim.id}/export`}
+            // One file, index first, documents in checklist order -- what
+            // the insurer's portal wants in a single upload.
+            download
+          >
+            Export as one PDF
+          </a>
+        </section>
+      )}
+
       {/* Plain sentences, worst first. No scores, no progress ring. */}
       {problems.length > 0 && (
         <section className="mt-12">
