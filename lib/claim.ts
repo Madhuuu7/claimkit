@@ -34,6 +34,13 @@ export type ChecklistItem = {
   /** How many files the insurer expects, when the family knows. */
   expected: number | null
   required: boolean
+  /**
+   * Ticked by hand. Some documents are handed over at the hospital desk
+   * and never exist as a file, so the family needs to be able to say
+   * "this one is done" without uploading anything. An override, never
+   * derived: false means no override, not "not done".
+   */
+  markedDone?: boolean
   docs: UploadedDoc[]
 }
 
@@ -55,6 +62,7 @@ export type Claim = {
 export type ItemState = 'complete' | 'partial' | 'empty'
 
 export function itemState(item: ChecklistItem): ItemState {
+  if (item.markedDone) return 'complete'
   if (item.docs.length === 0) return 'empty'
   if (item.expected !== null && item.docs.length < item.expected) return 'partial'
   return 'complete'
