@@ -10,5 +10,11 @@ export default defineConfig({
   },
   datasource: {
     url: process.env["DATABASE_URL"],
+    // `prisma dev` hands out a database called template1, and Postgres
+    // copies template1 into every new database -- including the throwaway
+    // one a migration would be diffed against, which then already has
+    // every type and table in it. So the shadow database is named
+    // explicitly: `prisma dev` runs a second server for exactly this.
+    shadowDatabaseUrl: process.env["SHADOW_DATABASE_URL"],
   },
 });

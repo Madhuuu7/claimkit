@@ -97,7 +97,9 @@ export function completeness(claim: Claim): { done: number; total: number } {
  * The last day the insurer will accept this claim. Depends only on the
  * claim itself, so it is safe to prerender -- unlike the countdown.
  */
-export function dueDate(claim: Claim): Date {
+export type Deadline = Pick<Claim, 'dischargedOn' | 'submissionWindowDays'>
+
+export function dueDate(claim: Deadline): Date {
   // Deliberately all-UTC. Parsing "2026-10-19" gives UTC midnight, so
   // reading it back with local getters lands on the previous day for
   // anyone behind UTC -- which would quietly move every deadline a day
@@ -113,7 +115,7 @@ export function dueDate(claim: Claim): Date {
  * "now" is reduced to the viewer's local calendar date, because a family
  * in Bengaluru cares which day it is where they are, not in UTC.
  */
-export function daysRemaining(claim: Claim, now: Date = new Date()): number {
+export function daysRemaining(claim: Deadline, now: Date = new Date()): number {
   const localDay = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate())
   return Math.round((dueDate(claim).getTime() - localDay) / 86_400_000)
 }

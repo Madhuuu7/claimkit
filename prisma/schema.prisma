@@ -232,11 +232,16 @@ model Document {
   /// What the family calls it, usually the phone's filename.
   name String
 
-  /// Where the bytes are in the bucket. The bucket is private; nothing
-  /// is served from here without a short-lived signed URL.
-  storageKey  String @unique
-  contentType String
-  sizeBytes   Int
+  /// Where the bytes are in the bucket. The bucket is private; nothing is
+  /// served from here without a short-lived signed URL.
+  ///
+  /// Null while the file is still only on the phone that photographed
+  /// it: offline, a family registers the document and the bytes follow
+  /// when there is signal. The row exists either way, so the checklist
+  /// and the reconciliation are right before the upload finishes.
+  storageKey  String? @unique
+  contentType String?
+  sizeBytes   Int?
 
   /// Only bills carry an amount. A discharge summary has no rupee value,
   /// and storing a zero for it would quietly corrupt the reconciliation.
