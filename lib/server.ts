@@ -41,7 +41,30 @@ export class DemoServer {
   private seqOf = new Map<string, number>()
   private clock = new LamportClock()
 
-  constructor(private readonly base: Claim) {}
+  constructor(
+    private readonly base: Claim,
+    /**
+     * Called with the accepted log after every change, so the demo can
+     * persist it. Without this, reloading the page would reset the
+     * server while the phones kept their own stored state, and the two
+     * would disagree about a claim that is supposed to be shared.
+     */
+    private readonly onChange?: (ops: Op[]) => void,
+  ) {}
+
+  /** Rebuild from a persisted log. Must run before any client syncs. */
+  restore(ops: readonly Op[]): void {
+    this.log = []
+    this.seqOf.clear()
+    for (const op of ops) {
+      // Re-validated rather than trusted: a stored log should not be
+      // able to put the server in a state it would never have accepted.
+      if (validateOp(this.claim, op)) continue
+      this.clock.observe(op.clock)
+      this.log.push(op)
+      this.seqOf.set(op.id, this.log.length)
+    }
+  }
 
   /** What the server believes, derived the same way the client derives it. */
   get claim(): Claim {
@@ -74,6 +97,7 @@ export class DemoServer {
     this.log.push(op)
     const seq = this.log.length
     this.seqOf.set(op.id, seq)
+    this.onChange?.(this.log)
     return { ok: true, seq }
   }
 
@@ -101,8 +125,7 @@ export type NetworkOptions = {
 export class SimulatedNetwork implements Transport {
   /** The demo switch. Flipped mid-request on purpose. */
   online = true
-  /** Also mutable: the demo drops acknowledgements on demand. */
-  dropAckRate: number
+  private dropAckRate: number
   private readonly latencyMs: number
   private readonly random: () => number
   private readonly sleep: (ms: number) => Promise<void>
@@ -124,6 +147,11 @@ export class SimulatedNetwork implements Transport {
    */
   setOnline(online: boolean): void {
     this.online = online
+  }
+
+  /** Start, or stop, losing the server's replies after it has applied them. */
+  setDropAckRate(rate: number): void {
+    this.dropAckRate = rate
   }
 
   private async wire(): Promise<void> {

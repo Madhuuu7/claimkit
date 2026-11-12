@@ -17,8 +17,10 @@ type Harness = {
   network: SimulatedNetwork
   engine: SyncEngine
   store: ClaimStore
-  /** Runs whatever the engine scheduled as a retry, in order. */
+  /** Runs whatever the engine scheduled -- a retry, or a poll -- in order. */
   runRetries: () => Promise<void>
+  /** How many callbacks are waiting to run. */
+  scheduled: () => number
 }
 
 async function harness(
@@ -30,6 +32,7 @@ async function harness(
     dropAckRate?: number
     /** Start with the radio already off, as a phone in a basement does. */
     offline?: boolean
+    pollMs?: number
   } = {},
 ): Promise<Harness> {
   const base = options.base ?? demoClaim
@@ -47,6 +50,7 @@ async function harness(
     device: options.device ?? { id: 'phone-a', name: 'Madhura' },
     now: () => new Date('2026-11-12T18:00:00Z'),
     schedule: (fn) => void retries.push(fn),
+    pollMs: options.pollMs,
     // Unique across harnesses, not just within one: a reload gets a
     // fresh engine but the documents its predecessor queued are still
     // there, and a repeated id would be refused as a duplicate file.
@@ -63,12 +67,15 @@ async function harness(
     engine,
     store,
     runRetries: async () => {
-      while (retries.length > 0) {
-        retries.shift()!()
-        // The retry kicks off a sync; let it settle.
+      // Snapshot first: a poll schedules the next poll, which would
+      // otherwise loop forever.
+      const due = retries.splice(0, retries.length)
+      for (const run of due) {
+        run()
         await engine.sync()
       }
     },
+    scheduled: () => retries.length,
   }
 }
 
@@ -178,7 +185,7 @@ describe('sending', () => {
     expect(engine.getState().queued[0].attempts).toBeGreaterThan(0)
 
     // Second attempt: the acknowledgement gets through this time.
-    network.dropAckRate = 0
+    network.setDropAckRate(0)
     await runRetries()
 
     expect(engine.getState().queued).toEqual([])
@@ -383,6 +390,35 @@ describe('two family members, two phones', () => {
     expect(docsOf(a.engine.getState().claim).find((d) => d.id === DOC)!.amountPaise).toBe(
       11_250_00,
     )
+  })
+})
+
+describe('an idle phone', () => {
+  it('learns what the other one did without being touched', async () => {
+    // Found by driving the real app: Anand resolves a disagreement, and
+    // Madhura's phone -- online, in her hand, untouched -- went on
+    // showing the conflict, because nothing made it ask. This transport
+    // has no way for the server to speak first, so the engine asks on an
+    // interval. A deployment would swap that for an event stream.
+    const server = new DemoServer(demoClaim)
+    const a = await harness({ server, device: { id: 'phone-a', name: 'Madhura' }, pollMs: 1000 })
+    const b = await harness({ server, device: { id: 'phone-b', name: 'Anand' } })
+
+    await b.engine.setItemDone('i8', true)
+    await b.engine.sync()
+    expect(itemState(a.engine.getState().claim.items.find((i) => i.id === 'i8')!)).toBe('empty')
+
+    await a.runRetries() // the poll that was scheduled after its last sync
+
+    expect(itemState(a.engine.getState().claim.items.find((i) => i.id === 'i8')!)).toBe(
+      'complete',
+    )
+  })
+
+  it('does not poll while it has no signal', async () => {
+    const { engine, scheduled } = await harness({ pollMs: 1000, offline: true })
+    await engine.sync()
+    expect(scheduled()).toBe(0)
   })
 })
 

@@ -35,10 +35,3 @@ export function useBrowserConnection(engine: SyncEngine, enabled = true): void {
     }
   }, [engine, enabled])
 }
-
-/** Read the outbox off disk and start draining it. */
-export function useEngineStart(engine: SyncEngine): void {
-  useEffect(() => {
-    void engine.start()
-  }, [engine])
-}

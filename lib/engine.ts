@@ -61,6 +61,15 @@ export type EngineOptions = {
   schedule?: (fn: () => void, ms: number) => void
   /** Injected so document ids are reproducible in tests. */
   newId?: () => string
+  /**
+   * How often to ask the server what else has happened, while online and
+   * idle. Without it a phone that is just sitting on the kitchen table
+   * never hears that someone else resolved a disagreement, because this
+   * transport has no way for the server to speak first. A real
+   * deployment would swap the polling for an event stream; the engine
+   * does not care which, it only cares that `pull` gets called.
+   */
+  pollMs?: number
 }
 
 const MAX_BACKOFF_MS = 30_000
@@ -76,6 +85,8 @@ export class SyncEngine {
   private flushing: Promise<void> | null = null
   private retryQueued = false
 
+  private readonly pollMs: number | null
+  private pollQueued = false
   private online = true
   private syncing = false
   private ready = false
@@ -98,6 +109,7 @@ export class SyncEngine {
     this.now = options.now ?? (() => new Date())
     this.schedule =
       options.schedule ?? ((fn, ms) => void setTimeout(fn, ms))
+    this.pollMs = options.pollMs ?? null
     this.newId =
       options.newId ??
       (() =>
@@ -318,6 +330,7 @@ export class SyncEngine {
       await this.drain()
       await this.pull()
       this.lastSyncedAt = this.now().toISOString()
+      this.schedulePoll()
     } catch {
       // Offline, or the request failed. The queue is on disk; the retry
       // is already scheduled by drain().
@@ -367,6 +380,15 @@ export class SyncEngine {
       this.scheduleRetry(updated.attempts)
       return
     }
+  }
+
+  private schedulePoll(): void {
+    if (this.pollMs === null || this.pollQueued || !this.online) return
+    this.pollQueued = true
+    this.schedule(() => {
+      this.pollQueued = false
+      if (this.online) void this.sync()
+    }, this.pollMs)
   }
 
   private scheduleRetry(attempts: number): void {
