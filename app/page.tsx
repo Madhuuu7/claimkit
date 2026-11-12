@@ -1,4 +1,5 @@
 import { Suspense } from 'react'
+import { Account } from '@/components/Account'
 import { DeadlineCountdown, DeadlineFallback } from '@/components/Deadline'
 import { Workspace } from '@/components/Workspace'
 import { demoClaim } from '@/lib/demo'
@@ -14,6 +15,14 @@ export default function Page() {
       deadline={
         <Suspense fallback={<DeadlineFallback claim={demoClaim} />}>
           <DeadlineCountdown claim={demoClaim} />
+        </Suspense>
+      }
+      // The session is read at request time, so it cannot be part of the
+      // prerendered shell. It streams in behind its own boundary instead,
+      // and the sheet is on screen before it arrives.
+      account={
+        <Suspense fallback={<span className="text-ink-faint">&nbsp;</span>}>
+          <Account />
         </Suspense>
       }
     />

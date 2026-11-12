@@ -1,0 +1,355 @@
+// ClaimKit's database.
+//
+// Two things shape this schema more than anything else.
+//
+// First, every row that matters hangs off a Claim, and a Claim is reached
+// only through ClaimMember. There is no other way in. That is what makes
+// "a user must never see another family's claim" a property of the data
+// model rather than a rule each route has to remember.
+//
+// Second, money is an integer number of paise, never a float and never a
+// decimal string. Int tops out at 2,147,483,647 paise, which is a little
+// over 21 crore rupees -- comfortably past any hospital bill, and small
+// enough to stay a plain JavaScript number on both sides of the wire.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+/// ---------------------------------------------------------------------
+/// Auth.js
+///
+/// These four shapes are the Prisma adapter's, not ours: it reads and
+/// writes them directly, so the fields are its names rather than the
+/// ones used elsewhere in this schema.
+/// ---------------------------------------------------------------------
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+  createdAt     DateTime  @default(now())
+
+  accounts Account[]
+  sessions Session[]
+
+  memberships    ClaimMember[]
+  claimsCreated  Claim[]        @relation("ClaimCreatedBy")
+  documents      Document[]
+  statusEvents   StatusEvent[]
+  activity       ActivityLog[]
+  invitesCreated Invite[]
+  ops            Op[]
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+/// ---------------------------------------------------------------------
+/// The claim
+/// ---------------------------------------------------------------------
+
+enum ClaimStatus {
+  DRAFT
+  SUBMITTED
+  QUERY_RAISED
+  QUERY_RESOLVED
+  SETTLED
+  REJECTED
+}
+
+enum MemberRole {
+  OWNER
+  CONTRIBUTOR
+}
+
+/// A document the insurer expects. Either a bill, which carries an
+/// amount, or a record, which does not.
+enum ItemKind {
+  BILL
+  RECORD
+}
+
+model Claim {
+  id          String @id @default(cuid())
+  patientName String
+  hospital    String
+
+  /// Dates, not timestamps: the deadline is counted in whole calendar
+  /// days, and a time of day would move it for anyone in another zone.
+  admittedOn   DateTime @db.Date
+  dischargedOn DateTime @db.Date
+
+  /// The figure everything else reconciles against.
+  finalBillPaise Int
+
+  /// Days the policy allows after discharge. Entered by the family,
+  /// because it differs by policy and guessing it would be worse than
+  /// asking.
+  submissionWindowDays Int
+
+  status ClaimStatus @default(DRAFT)
+
+  /// Set when the insurer settles, alongside a Deduction per reduction.
+  settledAmountPaise Int?
+  settledAt          DateTime?
+
+  /// Sample data for the live demo, flagged so the UI can say so and
+  /// nobody mistakes it for their own claim.
+  isSample Boolean @default(false)
+
+  createdById String
+  createdBy   User   @relation("ClaimCreatedBy", fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  members      ClaimMember[]
+  items        ChecklistItem[]
+  documents    Document[]
+  statusEvents StatusEvent[]
+  deductions   Deduction[]
+  activity     ActivityLog[]
+  invites      Invite[]
+  ops          Op[]
+
+  @@index([createdById])
+}
+
+model ClaimMember {
+  id      String     @id @default(cuid())
+  claimId String
+  userId  String
+  role    MemberRole @default(CONTRIBUTOR)
+
+  joinedAt DateTime @default(now())
+
+  claim Claim @relation(fields: [claimId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// One membership per person per claim. Also the lookup every
+  /// authorisation check makes, so it is the index that matters most.
+  @@unique([claimId, userId])
+  @@index([userId])
+}
+
+model Invite {
+  id String @id @default(cuid())
+
+  /// What goes in the link. Random, long, and unique -- never the claim
+  /// id, or the link would be guessable from a claim anyone had seen.
+  token String @unique
+
+  claimId     String
+  createdById String
+
+  expiresAt DateTime
+  /// Set when the owner withdraws the link. Kept rather than deleted so
+  /// the activity log can still explain what happened.
+  revokedAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  claim     Claim @relation(fields: [claimId], references: [id], onDelete: Cascade)
+  createdBy User  @relation(fields: [createdById], references: [id])
+
+  @@index([claimId])
+}
+
+model ChecklistItem {
+  id      String   @id @default(cuid())
+  claimId String
+  label   String
+  kind    ItemKind @default(RECORD)
+
+  /// How many files the insurer expects, when the family knows. Null
+  /// means "as many as there are".
+  expected Int?
+
+  required Boolean @default(true)
+
+  /// Ticked by hand, for a document handed over at the hospital desk
+  /// that never exists as a file.
+  markedDone Boolean @default(false)
+
+  /// Checklist order, which is also the order of the exported PDF.
+  position Int
+
+  claim     Claim      @relation(fields: [claimId], references: [id], onDelete: Cascade)
+  documents Document[]
+
+  @@index([claimId, position])
+}
+
+model Document {
+  id              String @id @default(cuid())
+  claimId         String
+  checklistItemId String
+
+  /// What the family calls it, usually the phone's filename.
+  name String
+
+  /// Where the bytes are in the bucket. The bucket is private; nothing
+  /// is served from here without a short-lived signed URL.
+  storageKey  String @unique
+  contentType String
+  sizeBytes   Int
+
+  /// Only bills carry an amount. A discharge summary has no rupee value,
+  /// and storing a zero for it would quietly corrupt the reconciliation.
+  amountPaise Int?
+
+  uploadedById String
+  uploadedAt   DateTime @default(now())
+
+  claim         Claim         @relation(fields: [claimId], references: [id], onDelete: Cascade)
+  checklistItem ChecklistItem @relation(fields: [checklistItemId], references: [id], onDelete: Cascade)
+  uploadedBy    User          @relation(fields: [uploadedById], references: [id])
+
+  @@index([claimId])
+  @@index([checklistItemId])
+}
+
+model StatusEvent {
+  id      String @id @default(cuid())
+  claimId String
+
+  /// Null for the claim's first state, which nothing moved it out of.
+  from ClaimStatus?
+  to   ClaimStatus
+
+  byId String
+  at   DateTime @default(now())
+  note String?
+
+  claim Claim @relation(fields: [claimId], references: [id], onDelete: Cascade)
+  by    User  @relation(fields: [byId], references: [id])
+
+  @@index([claimId, at])
+}
+
+model Deduction {
+  id          String @id @default(cuid())
+  claimId     String
+  amountPaise Int
+  reason      String
+
+  claim Claim @relation(fields: [claimId], references: [id], onDelete: Cascade)
+
+  @@index([claimId])
+}
+
+model ActivityLog {
+  id      String @id @default(cuid())
+  claimId String
+
+  /// Null when the actor has since been removed from the family: the
+  /// claim should still be able to say what happened to it.
+  actorId String?
+
+  /// A short machine-readable verb, e.g. document.added.
+  kind String
+
+  /// The sentence to show. Written at the time, because labels change
+  /// and an old entry should still read correctly.
+  summary String
+
+  at DateTime @default(now())
+
+  claim Claim @relation(fields: [claimId], references: [id], onDelete: Cascade)
+  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([claimId, at])
+}
+
+/// ---------------------------------------------------------------------
+/// The sync log
+///
+/// Not in the original plan, and the reason the offline client works.
+/// Phones do not send "the new claim", they send operations, and this is
+/// where the accepted ones live. Everything above can be derived from it.
+///
+/// A client pages forward by `seq`, which is why it is a single
+/// autoincrementing sequence rather than a per-claim counter: the
+/// database hands them out, so two phones pushing at once cannot both
+/// think they are number seven.
+/// ---------------------------------------------------------------------
+
+model Op {
+  seq BigInt @id @default(autoincrement())
+
+  /// `${deviceId}:${counter}`, minted by the device. The idempotency key:
+  /// delivery is at-least-once, so the same op arrives twice whenever an
+  /// acknowledgement is what got lost.
+  opId String
+
+  claimId  String
+  deviceId String
+
+  /// Lamport clock, not wall time. Phone clocks disagree, and a fast one
+  /// would otherwise win every conflict forever.
+  clock Int
+
+  /// The clock of the value this write was based on, for writes to a
+  /// single-value field. Null means it was written blind. This is what
+  /// tells an edit apart from a conflict.
+  after Int?
+
+  /// The operation itself, validated against a Zod schema on the way in
+  /// and replayed by the same pure code the browser runs.
+  body Json
+
+  actorId    String
+  acceptedAt DateTime @default(now())
+
+  claim Claim @relation(fields: [claimId], references: [id], onDelete: Cascade)
+  actor User  @relation(fields: [actorId], references: [id])
+
+  /// Per claim, because op ids are only unique within a device and a
+  /// device belongs to a person, not to a claim.
+  @@unique([claimId, opId])
+  @@index([claimId, seq])
+}

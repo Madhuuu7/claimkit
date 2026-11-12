@@ -43,10 +43,13 @@ export function Sheet({
   state,
   deviceId,
   deadline,
+  account,
 }: {
   engine: SyncEngine
   state: EngineState
   deviceId: string
+  /** Rendered on the server: who is signed in, and the way out. */
+  account?: ReactNode
   /**
    * Rendered on the server, passed in from the page. The due date comes
    * off the claim and prerenders with the sheet; the countdown is the one
@@ -63,9 +66,10 @@ export function Sheet({
 
   return (
     <div className="mx-auto w-full max-w-[52rem] px-5 pb-24 sm:px-8">
-      <header className="flex items-baseline justify-between gap-4 py-6">
+      <header className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-6 text-[0.82rem]">
         <span className="font-serif text-[1.05rem] text-ink">ClaimKit</span>
-        <span className="text-[0.82rem] text-ink-soft" aria-live="polite">
+        {account}
+        <span className="text-ink-soft" aria-live="polite">
           {syncLine(state)}
           {/* Only once the outbox has been read, because whether storage
               exists is not knowable during the server render, and saying

@@ -23,7 +23,15 @@ const MEMBERS = [
  * real second device on the same server, so a disagreement between two
  * family members can be created rather than described.
  */
-export function Workspace({ base, deadline }: { base: Claim; deadline: ReactNode }) {
+export function Workspace({
+  base,
+  deadline,
+  account,
+}: {
+  base: Claim
+  deadline: ReactNode
+  account?: ReactNode
+}) {
   const [world] = useState(() => createWorld(base, MEMBERS))
   const [signal, setSignal] = useState<Record<string, boolean>>(() =>
     Object.fromEntries(MEMBERS.map((m) => [m.id, true])),
@@ -60,7 +68,13 @@ export function Workspace({ base, deadline }: { base: Claim; deadline: ReactNode
 
   return (
     <>
-      <Sheet engine={mine.engine} state={state} deviceId={mine.id} deadline={deadline} />
+      <Sheet
+        engine={mine.engine}
+        state={state}
+        deviceId={mine.id}
+        deadline={deadline}
+        account={account}
+      />
 
       <div className="fixed inset-x-0 bottom-0">
         {showOther && (
