@@ -34,7 +34,19 @@ export type OutboxEntry = {
  * than an empty page, and so a reconnect asks for the delta instead of
  * re-downloading everything.
  */
-export type Snapshot = { claim: Claim; seq: number }
+export type Snapshot = {
+  /** The claim as the server's log had left it at `seq`. */
+  claim: Claim
+  /**
+   * Server ops after that point. Kept rather than folded in so that an
+   * unresolved disagreement between two family members is still on the
+   * sheet after a reload -- folding them in would collapse the log to a
+   * single value and quietly lose the other figure. The engine folds them
+   * once there is nothing left to resolve.
+   */
+  ops: Op[]
+  seq: number
+}
 
 export interface ClaimStore {
   loadOutbox(): Promise<OutboxEntry[]>

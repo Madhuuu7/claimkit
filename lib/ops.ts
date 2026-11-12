@@ -155,6 +155,12 @@ export type ReplayResult = {
   conflicts: Conflict[]
   /** Ops the replay refused to apply, with the reason. */
   dropped: { op: Op; reason: string }[]
+  /**
+   * The winning write per single-value field. A device reads its clock
+   * out of here to fill in `after` on its next edit -- the read-then-write
+   * that makes conflict detection possible at all.
+   */
+  winners: Map<string, Op>
 }
 
 export type ReplayOptions = {
@@ -285,6 +291,7 @@ export function replay(
     },
     conflicts,
     dropped,
+    winners,
   }
 }
 

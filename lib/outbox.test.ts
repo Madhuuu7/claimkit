@@ -84,20 +84,20 @@ describe.each(implementations)('%s', (_name, create) => {
   })
 
   it('round-trips the snapshot it will open offline with', async () => {
-    await store.saveSnapshot({ claim: demoClaim, seq: 7 })
+    await store.saveSnapshot({ claim: demoClaim, ops: [], seq: 7 })
     const loaded = await store.loadSnapshot()
     expect(loaded?.seq).toBe(7)
     expect(loaded?.claim).toEqual(demoClaim)
   })
 
   it('keeps one snapshot, not a pile of them', async () => {
-    await store.saveSnapshot({ claim: demoClaim, seq: 1 })
-    await store.saveSnapshot({ claim: demoClaim, seq: 2 })
+    await store.saveSnapshot({ claim: demoClaim, ops: [], seq: 1 })
+    await store.saveSnapshot({ claim: demoClaim, ops: [], seq: 2 })
     expect((await store.loadSnapshot())?.seq).toBe(2)
   })
 
   it('hands back copies, so a replay cannot mutate what is stored', async () => {
-    await store.saveSnapshot({ claim: demoClaim, seq: 1 })
+    await store.saveSnapshot({ claim: demoClaim, ops: [], seq: 1 })
     const first = await store.loadSnapshot()
     first!.claim.items[0].label = 'scribbled over'
     expect((await store.loadSnapshot())?.claim.items[0].label).toBe('Claim form')
@@ -113,7 +113,7 @@ describe('IdbClaimStore durability', () => {
     const before = new IdbClaimStore(name)
     await before.saveEntry(entry('a:1', 1))
     await before.saveEntry(entry('a:2', 2))
-    await before.saveSnapshot({ claim: demoClaim, seq: 4 })
+    await before.saveSnapshot({ claim: demoClaim, ops: [], seq: 4 })
 
     const after = new IdbClaimStore(name)
     expect((await after.loadOutbox()).map((e) => e.op.id)).toEqual(['a:1', 'a:2'])
