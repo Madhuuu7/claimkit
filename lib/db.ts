@@ -1,5 +1,6 @@
 import 'server-only'
 import { PrismaNeon } from '@prisma/adapter-neon'
+import { PrismaPg } from '@prisma/adapter-pg'
 import { PrismaClient } from './generated/prisma/client'
 
 /**
@@ -11,12 +12,17 @@ import { PrismaClient } from './generated/prisma/client'
  * off globalThis is the standard way out: module state is replaced on a
  * reload, global state is not.
  *
- * Prisma 7 talks to the database through a driver adapter, and the one
- * chosen here is Neon's. It matters on the deployment this is going to:
- * a serverless function is a process that lives for one request, so a
- * normal TCP pool would be opened and thrown away thousands of times an
- * hour, and Neon's free tier would start refusing connections. The Neon
- * driver sends queries over HTTP instead, which has no pool to exhaust.
+ * Prisma 7 talks to the database through a driver adapter, and which one
+ * is right depends on where the database is, so the URL decides:
+ *
+ *  - Neon, in production. A serverless function is a process that lives
+ *    for one request, so a normal TCP pool would be opened and thrown
+ *    away thousands of times an hour and the free tier would start
+ *    refusing connections. Neon's driver sends queries over HTTP, which
+ *    has no pool to exhaust.
+ *  - node-postgres, for a local Postgres, which speaks the wire protocol
+ *    and nothing else. One long-lived process, so a pool is exactly
+ *    right here.
  *
  * `server-only` at the top is not decoration. If a client component ever
  * imports this file by accident the build fails here, rather than
@@ -30,12 +36,19 @@ if (!connectionString && process.env.NODE_ENV === 'production') {
   throw new Error('DATABASE_URL is not set')
 }
 
+function createAdapter(url: string) {
+  // Neon's own hostnames are the only ones its HTTP driver can reach.
+  return /\.neon\.tech|neon\.build/.test(url)
+    ? new PrismaNeon({ connectionString: url })
+    : new PrismaPg({ connectionString: url })
+}
+
 function createClient(): PrismaClient {
   return new PrismaClient({
-    // Empty string rather than undefined so that a build without a
-    // database, which never runs a query, still type-checks and
-    // compiles; the first real query is what fails, loudly.
-    adapter: new PrismaNeon({ connectionString: connectionString ?? '' }),
+    // Empty string rather than undefined so a build with no database --
+    // which never runs a query -- still compiles. The first real query
+    // is what fails, loudly.
+    adapter: createAdapter(connectionString ?? ''),
     log: process.env.NODE_ENV === 'development' ? ['warn', 'error'] : ['error'],
   })
 }
