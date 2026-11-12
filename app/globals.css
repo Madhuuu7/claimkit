@@ -1,26 +1,205 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/* ------------------------------------------------------------------
+   ClaimKit design tokens
+
+   The subject is a family assembling a reimbursement claim while
+   someone is in hospital. So: paper, not dashboard. Calm, legible,
+   and honest about what is missing.
+
+   Teal is the only accent, used for action and for completion.
+   Amber appears in exactly two situations -- money that is not
+   accounted for, and a deadline running out. Nothing else is
+   coloured, so when something does turn amber it means something.
+   ------------------------------------------------------------------ */
+
+@theme {
+  --color-paper: #fafaf7;
+  --color-paper-sunk: #f2f2ec;
+  --color-sheet: #ffffff;
+  --color-ink: #13211f;
+  --color-ink-soft: #5d6b67;
+  --color-ink-faint: #8d9894;
+  --color-rule: #dddcd4;
+  --color-rule-soft: #ebeae2;
+
+  --color-teal: #0b5e55;
+  --color-teal-deep: #084740;
+  --color-wash: #e6f0ee;
+
+  --color-amber: #a8620e;
+  --color-amber-wash: #faf0e2;
+
+  --font-sans: var(--font-instrument), ui-sans-serif, system-ui, sans-serif;
+  --font-serif: var(--font-newsreader), Georgia, serif;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    /* Paper is the point, so this design is light only. Declaring it stops
+       a dark-mode OS rendering form controls and scrollbars dark against
+       it. */
+    color-scheme: light;
+  }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+  body {
+    background: var(--color-paper);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: 15px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Figures line up in columns wherever they appear. A reconciliation
+     tool where the digits do not align is a reconciliation tool nobody
+     trusts. */
+  .tnum,
+  table,
+  .money {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-teal);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  button {
+    cursor: pointer;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+@layer components {
+  /* --- the sheet ------------------------------------------------- */
+
+  .sheet {
+    background: var(--color-sheet);
+    border: 1px solid var(--color-rule);
+    border-radius: 6px;
+  }
+
+  /* --- type ------------------------------------------------------ */
+
+  .claim-title {
+    font-family: var(--font-serif);
+    font-size: clamp(1.9rem, 1.3rem + 2.2vw, 2.85rem);
+    font-weight: 400;
+    line-height: 1.1;
+    letter-spacing: -0.015em;
+  }
+
+  .figure {
+    font-family: var(--font-serif);
+    font-variant-numeric: tabular-nums;
+    font-weight: 400;
+    letter-spacing: -0.02em;
+    line-height: 1;
+  }
+
+  .section-heading {
+    font-family: var(--font-serif);
+    font-size: 1.22rem;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+  }
+
+  /* --- the ledger ------------------------------------------------ */
+
+  .ledger {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  .ledger th {
+    font-weight: 500;
+    font-size: 0.8rem;
+    color: var(--color-ink-faint);
+    text-align: left;
+    padding: 0 0 0.6rem;
+    border-bottom: 1px solid var(--color-rule);
+  }
+
+  .ledger td {
+    padding: 0.85rem 0;
+    border-bottom: 1px solid var(--color-rule-soft);
+    vertical-align: baseline;
+  }
+
+  .ledger tr:last-child td {
+    border-bottom: none;
+  }
+
+  .ledger .num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  /* --- controls -------------------------------------------------- */
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    font: inherit;
+    font-weight: 500;
+    padding: 0.6rem 1.1rem;
+    border-radius: 5px;
+    border: 1px solid transparent;
+    background: var(--color-teal);
+    color: #fff;
+    transition: background 0.15s ease;
+  }
+
+  .btn:hover {
+    background: var(--color-teal-deep);
+  }
+
+  .btn-quiet {
+    background: transparent;
+    color: var(--color-teal);
+    border-color: var(--color-rule);
+  }
+
+  .btn-quiet:hover {
+    background: var(--color-wash);
+  }
+
+  /* A document's state. Deliberately a ring rather than a filled
+     chip -- a half-finished claim should not look decorated. */
+  .mark {
+    flex: none;
+    width: 1.05rem;
+    height: 1.05rem;
+    border-radius: 50%;
+    border: 1.5px solid var(--color-rule);
+    display: grid;
+    place-items: center;
+    margin-top: 0.22rem;
+  }
+
+  .mark-done {
+    background: var(--color-teal);
+    border-color: var(--color-teal);
+    color: #fff;
+  }
+
+  .mark-partial {
+    border-color: var(--color-amber);
+    border-style: dashed;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
 }
