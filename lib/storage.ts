@@ -1,12 +1,15 @@
 import 'server-only'
-import { randomBytes } from 'node:crypto'
 import {
   DeleteObjectCommand,
   GetObjectCommand,
+  HeadObjectCommand,
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
+import { ALLOWED_TYPES, MAX_BYTES, type AllowedType } from './storage-types'
+
+export { ALLOWED_TYPES, MAX_BYTES, type AllowedType }
 
 /**
  * Where the files live.
@@ -29,11 +32,6 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
  * about any of them gets a rejection from R2 itself rather than from
  * code it could skip.
  */
-
-export const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'application/pdf'] as const
-export type AllowedType = (typeof ALLOWED_TYPES)[number]
-
-export const MAX_BYTES = 10 * 1024 * 1024
 
 /** Minutes, not hours: a leaked view URL should be stale almost at once. */
 const VIEW_SECONDS = 120
@@ -90,14 +88,49 @@ export function storageConfigured(): boolean {
 /**
  * The key a file gets.
  *
- * Scoped by claim so a stray key cannot be reused under another family's
- * claim, and suffixed with randomness so two phones photographing the
- * same receipt a second apart cannot collide. The family's filename is
- * deliberately *not* in the key: it would put a patient's name in a URL
- * that appears in logs.
+ * Derived, not random, and that is load-bearing: the server can
+ * recompute it when the browser reports an upload finished, so the
+ * client never gets to name the object it wrote. A client that could
+ * choose its own key could claim to have uploaded to someone else's.
+ *
+ * Scoped by claim, and the document id is already unique per file, so
+ * there is nothing to collide with. The family's filename is
+ * deliberately absent: it would put a patient's name in a URL that ends
+ * up in logs.
  */
 export function storageKeyFor(claimId: string, documentId: string, type: AllowedType): string {
-  return `claims/${claimId}/${documentId}-${randomBytes(6).toString('hex')}.${EXTENSION[type]}`
+  return `claims/${claimId}/${documentId}.${EXTENSION[type]}`
+}
+
+/**
+ * What is actually in the bucket at that key.
+ *
+ * Used before a document is marked uploaded. The browser saying "done"
+ * is a claim, not evidence -- the request could have failed, been
+ * cancelled, or never been made -- and a checklist that ticks itself for
+ * a file nobody can open is the one failure this app must not have.
+ */
+export async function headObject(
+  key: string,
+): Promise<{ sizeBytes: number; contentType: string | null } | null> {
+  try {
+    const result = await s3().send(new HeadObjectCommand({ Bucket: bucket(), Key: key }))
+    return {
+      sizeBytes: result.ContentLength ?? 0,
+      contentType: result.ContentType ?? null,
+    }
+  } catch (error) {
+    if (isNotFound(error)) return null
+    throw error
+  }
+}
+
+function isNotFound(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false
+  const name = (error as { name?: string }).name
+  const status = (error as { $metadata?: { httpStatusCode?: number } }).$metadata
+    ?.httpStatusCode
+  return name === 'NotFound' || name === 'NoSuchKey' || status === 404
 }
 
 /**

@@ -10,6 +10,7 @@ import {
 } from '@/lib/claim'
 import type { EngineState, SyncEngine } from '@/lib/engine'
 import { formatRupees } from '@/lib/money'
+import type { Uploads } from '@/lib/uploads-client'
 import { AmountField, ItemRow } from './ItemRow'
 import { ConflictPanel, RolledBack } from './ConflictPanel'
 
@@ -44,10 +45,13 @@ export function Sheet({
   deviceId,
   deadline,
   account,
+  uploads,
 }: {
   engine: SyncEngine
   state: EngineState
   deviceId: string
+  /** Absent in the demo, which has no bucket behind it. */
+  uploads?: Uploads
   /** Rendered on the server: who is signed in, and the way out. */
   account?: ReactNode
   /**
@@ -170,7 +174,13 @@ export function Sheet({
           </thead>
           <tbody>
             {claim.items.map((item) => (
-              <ItemRow key={item.id} item={item} claim={claim} engine={engine} />
+              <ItemRow
+                key={item.id}
+                item={item}
+                claim={claim}
+                engine={engine}
+                uploads={uploads}
+              />
             ))}
           </tbody>
         </table>

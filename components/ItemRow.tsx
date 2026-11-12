@@ -4,6 +4,7 @@ import { useId, useState } from 'react'
 import { itemState, type ChecklistItem, type Claim } from '@/lib/claim'
 import type { SyncEngine } from '@/lib/engine'
 import { MoneyError, formatRupees, parseRupees } from '@/lib/money'
+import { refuseFile, type Uploads } from '@/lib/uploads-client'
 
 export function describeFiles(count: number, expected: number | null): string {
   if (count === 0) return 'none yet'
@@ -39,10 +40,13 @@ export function ItemRow({
   item,
   claim,
   engine,
+  uploads,
 }: {
   item: ChecklistItem
   claim: Claim
   engine: SyncEngine
+  /** Absent in the demo, which has no bucket to upload to. */
+  uploads?: Uploads
 }) {
   const [open, setOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -130,10 +134,27 @@ export function ItemRow({
                   className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1"
                 >
                   <div className="min-w-0">
-                    <span className="break-all text-[0.92rem]">{doc.name}</span>
+                    {doc.stored && uploads ? (
+                      <a
+                        className="break-all text-[0.92rem] text-teal underline decoration-rule"
+                        href={uploads.viewUrl(doc.id)}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        {doc.name}
+                      </a>
+                    ) : (
+                      <span className="break-all text-[0.92rem]">{doc.name}</span>
+                    )}
                     <span className="ml-2 text-[0.8rem] text-ink-faint">
                       {doc.uploadedBy}
-                      {doc.pending && ' · waiting for signal'}
+                      {uploads?.uploadingDocId === doc.id
+                        ? ' · sending the file'
+                        : uploads?.waitingDocIds.has(doc.id)
+                          ? ' · file waiting for signal'
+                          : doc.pending
+                            ? ' · waiting for signal'
+                            : ''}
                     </span>
                   </div>
                   <div className="flex items-center gap-3">
@@ -157,12 +178,21 @@ export function ItemRow({
                 </div>
               ))}
 
-              <AddFile
-                item={item}
-                onAdd={(name, amountPaise) =>
-                  report(engine.addDocument(item.id, { name, amountPaise }))
-                }
-              />
+              {uploads ? (
+                <PickFile
+                  item={item}
+                  onPick={(file, amountPaise) =>
+                    report(uploads.addFile(item.id, file, amountPaise))
+                  }
+                />
+              ) : (
+                <AddFile
+                  item={item}
+                  onAdd={(name, amountPaise) =>
+                    report(engine.addDocument(item.id, { name, amountPaise }))
+                  }
+                />
+              )}
 
               {error && <p className="text-[0.85rem] text-amber">{error}</p>}
               {item.kind === 'bill' && claim.finalBillPaise > 0 && (
@@ -236,6 +266,87 @@ export function AmountField({
       />
       {problem && <span className="mt-0.5 text-[0.78rem] text-amber">{problem}</span>}
     </span>
+  )
+}
+
+/**
+ * Pick a file, give it an amount if it is a bill, and the sheet takes it
+ * immediately: the bytes go to IndexedDB, the document appears on the
+ * checklist, and the upload happens when there is signal. Nothing here
+ * waits for the network, which is the entire point of the app.
+ */
+function PickFile({
+  item,
+  onPick,
+}: {
+  item: ChecklistItem
+  onPick: (file: File, amountPaise: number | null) => void
+}) {
+  const [file, setFile] = useState<File | null>(null)
+  const [amount, setAmount] = useState('')
+  const [problem, setProblem] = useState<string | null>(null)
+  const inputId = useId()
+
+  const submit = () => {
+    if (!file) {
+      setProblem('Choose a photograph or a PDF')
+      return
+    }
+    const refusal = refuseFile(file)
+    if (refusal) {
+      setProblem(refusal)
+      return
+    }
+    let paise: number | null = null
+    if (item.kind === 'bill') {
+      try {
+        paise = parseRupees(amount)
+      } catch (e) {
+        setProblem(e instanceof MoneyError ? e.message : 'That is not an amount')
+        return
+      }
+    }
+    setProblem(null)
+    setFile(null)
+    setAmount('')
+    onPick(file, paise)
+  }
+
+  return (
+    <div className="flex flex-wrap items-start gap-2 pt-1">
+      <label
+        className="btn btn-quiet cursor-pointer px-3 py-1 text-[0.88rem]"
+        htmlFor={inputId}
+      >
+        {file ? file.name : 'Choose a file'}
+      </label>
+      <input
+        id={inputId}
+        type="file"
+        className="sr-only"
+        accept="image/jpeg,image/png,application/pdf"
+        onChange={(e) => {
+          const picked = e.target.files?.[0] ?? null
+          setFile(picked)
+          setProblem(picked ? refuseFile(picked) : null)
+        }}
+      />
+      {item.kind === 'bill' && (
+        <input
+          aria-label={`Amount for the file being added to ${item.label}`}
+          inputMode="decimal"
+          className="w-[7.5rem] rounded border border-rule bg-sheet px-2 py-1 text-right text-[0.92rem] tnum"
+          placeholder="Amount"
+          value={amount}
+          onChange={(e) => setAmount(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && submit()}
+        />
+      )}
+      <button type="button" className="btn px-3 py-1 text-[0.88rem]" onClick={submit}>
+        Add
+      </button>
+      {problem && <p className="w-full text-[0.85rem] text-amber">{problem}</p>}
+    </div>
   )
 }
 

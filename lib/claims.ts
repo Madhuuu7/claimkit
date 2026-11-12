@@ -375,6 +375,7 @@ export function toClientClaim(claim: ClaimDetail): ClientClaim {
         amountPaise: doc.amountPaise,
         uploadedBy: doc.uploadedBy.name ?? doc.uploadedBy.email ?? 'A family member',
         uploadedAt: doc.uploadedAt.toISOString(),
+        stored: doc.storageKey !== null,
       })),
     })),
   }

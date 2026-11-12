@@ -25,6 +25,12 @@ export type UploadedDoc = {
   uploadedAt: string
   /** Not yet synced: it exists on this device and nowhere else. */
   pending?: boolean
+  /**
+   * The bytes are in the bucket. False means the row exists but the file
+   * is still on the phone that photographed it, which is a normal state
+   * here and not an error -- it is what offline uploading looks like.
+   */
+  stored?: boolean
 }
 
 export type ChecklistItem = {

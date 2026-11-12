@@ -259,10 +259,13 @@ export class SyncEngine {
 
   addDocument(
     itemId: string,
-    doc: { name: string; amountPaise: Paise | null },
+    doc: { name: string; amountPaise: Paise | null; id?: string },
   ): Promise<string | null> {
     const uploaded: UploadedDoc = {
-      id: this.newId(),
+      // The caller supplies the id when a file has already been queued
+      // under it: the bytes on this phone and the row on the server have
+      // to be talking about the same document.
+      id: doc.id ?? this.newId(),
       name: doc.name,
       amountPaise: doc.amountPaise,
       uploadedBy: this.device.name,
