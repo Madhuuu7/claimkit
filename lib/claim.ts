@@ -63,6 +63,8 @@ export type Claim = {
   status: ClaimStatus
   members: { id: string; name: string; initials: string }[]
   items: ChecklistItem[]
+  /** Seeded as a worked example, and said so wherever it shows. */
+  isSample?: boolean
   /**
    * Present only once the insurer has paid. Not part of the op log: a
    * settlement is a record of what someone else did, transcribed from a

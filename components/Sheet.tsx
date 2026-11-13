@@ -87,6 +87,17 @@ export function Sheet({
         </span>
       </header>
 
+      {/* Said before the claim itself, not after it. Somebody who
+          mistook this for their own admission and submitted it would be
+          worse off than somebody who saw nothing at all. */}
+      {claim.isSample && (
+        <p className="mb-3 rounded-[6px] border border-rule bg-amber-wash px-4 py-2.5 text-[0.85rem] text-ink-soft">
+          <span className="text-ink">A sample claim.</span> Invented figures, invented
+          documents. Every button on it works; nothing on it is yours. Delete it whenever
+          you like.
+        </p>
+      )}
+
       {/* The cover sheet: who, where, and the two numbers that decide
           whether this claim gets paid in full. */}
       <section className="sheet px-6 py-7 sm:px-9 sm:py-9">

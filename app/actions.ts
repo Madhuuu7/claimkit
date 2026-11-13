@@ -15,6 +15,7 @@ import {
 } from '@/lib/claims'
 import { clearSettlement, recordSettlement, SettlementRefused } from '@/lib/settlement'
 import { createClaimSchema, settlementSchema } from '@/lib/schemas'
+import { ensureSampleClaim } from '@/lib/sample'
 
 /**
  * Server actions.
@@ -187,5 +188,19 @@ export async function clearSettlementAction(claimId: string): Promise<ActionResu
   }
   revalidatePath(`/claims/${claimId}`)
   revalidatePath(`/claims/${claimId}/settlement`)
+  return { ok: true }
+}
+
+/**
+ * The sample claim, for an account that predates it or deleted it.
+ *
+ * New accounts get one when they are created; this is the way back to
+ * it, offered quietly on the claims list rather than pushed.
+ */
+export async function addSampleClaimAction(): Promise<ActionResult> {
+  const userId = await requireUserId()
+  const created = await ensureSampleClaim(userId)
+  revalidatePath('/')
+  if (!created) return { error: 'You already have the sample claim' }
   return { ok: true }
 }

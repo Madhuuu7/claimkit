@@ -3,6 +3,7 @@ import NextAuth, { type DefaultSession } from 'next-auth'
 import Google from 'next-auth/providers/google'
 import { PrismaAdapter } from '@auth/prisma-adapter'
 import { prisma } from './db'
+import { ensureSampleClaim } from './sample'
 
 /**
  * Who is asking.
@@ -30,6 +31,24 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   providers: [Google],
   session: { strategy: 'database' },
   pages: { signIn: '/signin' },
+  events: {
+    // A new account with nothing in it explains nothing. The sample
+    // claim is created here, once, at the moment the adapter writes the
+    // user row -- so the first page they see has a worked example on
+    // it rather than an empty list and a form.
+    //
+    // Failing to seed it must never fail the sign-in: a person who
+    // cannot get in has a much worse problem than one with an empty
+    // list, and the claims page offers the sample again anyway.
+    async createUser({ user }) {
+      if (!user.id) return
+      try {
+        await ensureSampleClaim(user.id)
+      } catch {
+        // Swallowed on purpose. See above.
+      }
+    },
+  },
   callbacks: {
     session({ session, user }) {
       // The adapter hands us the user row; the id is what every

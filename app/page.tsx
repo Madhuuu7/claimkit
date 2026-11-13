@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { Suspense } from 'react'
 import { Account } from '@/components/Account'
 import { NewClaimForm } from '@/components/NewClaimForm'
+import { AddSampleClaim } from '@/components/SampleClaim'
 import { currentUser } from '@/lib/auth'
 import { daysRemaining } from '@/lib/claim'
 import { listClaims, type ClaimSummary } from '@/lib/claims'
@@ -90,6 +91,9 @@ async function Claims() {
           {claims.length === 0 ? 'The hospital stay' : 'Another hospital stay'}
         </h2>
         <NewClaimForm />
+        {/* Only when they have none. The sample is a way in, not a
+            feature to keep offering someone who is mid-claim. */}
+        {!claims.some((claim) => claim.isSample) && <AddSampleClaim />}
       </section>
 
       <p className="mt-10 text-[0.85rem] text-ink-faint">

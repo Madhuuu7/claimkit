@@ -359,6 +359,7 @@ export function toClientClaim(claim: ClaimDetail): ClientClaim {
     finalBillPaise: claim.finalBillPaise,
     submissionWindowDays: claim.submissionWindowDays,
     status: STATUS_TO_CLIENT[claim.status],
+    isSample: claim.isSample,
     settlement:
       claim.settledAmountPaise === null || claim.settledAt === null
         ? null
