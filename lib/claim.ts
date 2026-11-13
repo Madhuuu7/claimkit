@@ -195,6 +195,21 @@ export function canTransition(from: ClaimStatus, to: ClaimStatus): boolean {
   return ALLOWED_TRANSITIONS[from].includes(to)
 }
 
+/**
+ * A claim that cannot move again, because no transition leads out of
+ * where it is. Settled and rejected are the two, but deriving it from
+ * the table rather than naming them means a new terminal status is
+ * closed everywhere the moment it is added.
+ *
+ * Everything that counts down to the submission deadline asks this
+ * first: once the insurer has answered, how long the family had to send
+ * the papers is history, and a sheet that keeps saying "5 days left"
+ * over a settled claim is just wrong.
+ */
+export function isClosed(status: ClaimStatus): boolean {
+  return ALLOWED_TRANSITIONS[status].length === 0
+}
+
 /* ------------------------------------------------------------------ *
  * Settlement
  *

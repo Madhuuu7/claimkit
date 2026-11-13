@@ -4,8 +4,8 @@ import { Account } from '@/components/Account'
 import { NewClaimForm } from '@/components/NewClaimForm'
 import { AddSampleClaim } from '@/components/SampleClaim'
 import { currentUser } from '@/lib/auth'
-import { daysRemaining } from '@/lib/claim'
-import { listClaims, type ClaimSummary } from '@/lib/claims'
+import { daysRemaining, isClosed } from '@/lib/claim'
+import { listClaims, toClientStatus, type ClaimSummary } from '@/lib/claims'
 import { formatRupees } from '@/lib/money'
 
 /**
@@ -115,7 +115,7 @@ function ClaimRow({ claim }: { claim: ClaimSummary }) {
     dischargedOn: claim.dischargedOn.toISOString().slice(0, 10),
     submissionWindowDays: claim.submissionWindowDays,
   })
-  const settled = claim.status === 'SETTLED' || claim.status === 'REJECTED'
+  const settled = isClosed(toClientStatus(claim.status))
 
   return (
     <Link className="block py-4 hover:bg-paper-sunk/60" href={`/claims/${claim.id}`}>

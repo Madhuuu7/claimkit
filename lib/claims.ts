@@ -322,6 +322,11 @@ const STATUS_TO_CLIENT: Record<ClaimStatus, ClientStatus> = {
   REJECTED: 'rejected',
 }
 
+/** The database's spelling of a status, in the domain's own vocabulary. */
+export function toClientStatus(status: ClaimStatus): ClientStatus {
+  return STATUS_TO_CLIENT[status]
+}
+
 export const STATUS_FROM_CLIENT: Record<ClientStatus, ClaimStatus> = {
   draft: 'DRAFT',
   submitted: 'SUBMITTED',

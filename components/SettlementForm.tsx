@@ -21,9 +21,23 @@ import { formatRupees } from '@/lib/money'
  * Amounts are typed in rupees and parsed to paise at the edge, by the
  * same parser the rest of the app uses, so "12,000" and "12000.50" both
  * mean what they look like.
+ *
+ * Every field is controlled, and the fields remount when a save comes
+ * back. Both are deliberate, and between them they close a hole that
+ * quietly destroyed data: React clears an uncontrolled form once its
+ * action settles, so after an in-place correction the deduction rows
+ * came back blank, and pressing Update a second time submitted those
+ * blanks and wiped the deductions. Holding the text in state means a
+ * rejected save keeps what was typed; keying the fields on the saved
+ * settlement means an accepted one shows what the server really stored.
  */
 
 type Row = { key: number; amount: string; reason: string }
+
+/** Plain digits, for an input someone is about to edit. Not a display string. */
+function rupees(paise: number): string {
+  return (paise / 100).toFixed(paise % 100 === 0 ? 0 : 2)
+}
 
 function rowsFrom(settlement: Settlement | null): Row[] {
   if (!settlement || settlement.deductions.length === 0) {
@@ -31,11 +45,24 @@ function rowsFrom(settlement: Settlement | null): Row[] {
   }
   return settlement.deductions.map((d, i) => ({
     key: i,
-    // Plain digits, not the grouped display string: this is going back
-    // into an input the person will edit.
-    amount: (d.amountPaise / 100).toFixed(d.amountPaise % 100 === 0 ? 0 : 2),
+    amount: rupees(d.amountPaise),
     reason: d.reason,
   }))
+}
+
+/**
+ * What the fields were filled from. A different one means the server
+ * holds a different letter than the one on screen, so the fields are
+ * rebuilt from it. `settledAt` moves on every save, which is what makes
+ * a correction that changed no figures still refresh the form.
+ */
+function fingerprint(settlement: Settlement | null): string {
+  if (!settlement) return 'none'
+  return [
+    settlement.settledAt,
+    settlement.settledAmountPaise,
+    ...settlement.deductions.map((d) => `${d.id}:${d.amountPaise}:${d.reason}`),
+  ].join('|')
 }
 
 export function SettlementForm({
@@ -47,11 +74,45 @@ export function SettlementForm({
   settlement: Settlement | null
   finalBillPaise: number
 }) {
+  // The action state sits outside the keyed fields on purpose: a save
+  // both remounts them and produces the message about having done so,
+  // and the message has to outlive the remount.
   const [result, submit, pending] = useActionState<ActionResult | null, FormData>(
     recordSettlementAction.bind(null, claimId),
     null,
   )
 
+  return (
+    <>
+      <SettlementFields
+        key={fingerprint(settlement)}
+        settlement={settlement}
+        finalBillPaise={finalBillPaise}
+        submit={submit}
+        pending={pending}
+        result={result}
+      />
+      {settlement && <ClearSettlement claimId={claimId} />}
+    </>
+  )
+}
+
+function SettlementFields({
+  settlement,
+  finalBillPaise,
+  submit,
+  pending,
+  result,
+}: {
+  settlement: Settlement | null
+  finalBillPaise: number
+  submit: (formData: FormData) => void
+  pending: boolean
+  result: ActionResult | null
+}) {
+  const [settled, setSettled] = useState(() =>
+    settlement ? rupees(settlement.settledAmountPaise) : '',
+  )
   const [rows, setRows] = useState<Row[]>(() => rowsFrom(settlement))
   const [nextKey, setNextKey] = useState(rows.length)
 
@@ -60,93 +121,99 @@ export function SettlementForm({
     setNextKey((k) => k + 1)
   }
 
+  const editRow = (key: number, field: 'amount' | 'reason', value: string) =>
+    setRows((current) =>
+      current.map((row) => (row.key === key ? { ...row, [field]: value } : row)),
+    )
+
   const removeRow = (key: number) =>
     setRows((current) =>
       current.length === 1 ? current : current.filter((row) => row.key !== key),
     )
 
   return (
-    <>
-      <form action={submit} className="sheet mt-5 px-5 py-6 sm:px-7">
-        <label className="block max-w-[18rem]">
-          <span className="block text-[0.82rem] text-ink-soft">
-            Amount the insurer settled
-          </span>
-          <input
-            className="money mt-1 w-full rounded border border-rule bg-sheet px-2.5 py-1.5"
-            name="settledAmount"
-            inputMode="decimal"
-            placeholder="2,62,000"
-            defaultValue={
-              settlement ? String(settlement.settledAmountPaise / 100) : undefined
-            }
-            required
-          />
-          <span className="mt-1 block text-[0.78rem] text-ink-faint">
-            The final bill was {formatRupees(finalBillPaise)}.
-          </span>
-        </label>
+    <form action={submit} className="sheet mt-5 px-5 py-6 sm:px-7">
+      <label className="block max-w-[18rem]">
+        <span className="block text-[0.82rem] text-ink-soft">
+          Amount the insurer settled
+        </span>
+        <input
+          className="money mt-1 w-full rounded border border-rule bg-sheet px-2.5 py-1.5"
+          name="settledAmount"
+          inputMode="decimal"
+          placeholder="2,62,000"
+          value={settled}
+          onChange={(event) => setSettled(event.target.value)}
+          required
+        />
+        <span className="mt-1 block text-[0.78rem] text-ink-faint">
+          The final bill was {formatRupees(finalBillPaise)}.
+        </span>
+      </label>
 
-        <hr className="my-6 border-0 border-t border-rule" />
+      <hr className="my-6 border-0 border-t border-rule" />
 
-        <fieldset>
-          <legend className="text-[0.82rem] text-ink-soft">
-            What the letter says was deducted
-          </legend>
-          <p className="mt-1 max-w-[32rem] text-[0.82rem] text-ink-faint">
-            One line per deduction, in the insurer&rsquo;s own words. Anything they kept
-            without naming a reason is what you can go back to them about.
-          </p>
+      <fieldset>
+        <legend className="text-[0.82rem] text-ink-soft">
+          What the letter says was deducted
+        </legend>
+        <p className="mt-1 max-w-[32rem] text-[0.82rem] text-ink-faint">
+          One line per deduction, in the insurer&rsquo;s own words. Anything they kept
+          without naming a reason is what you can go back to them about.
+        </p>
 
-          <ul className="mt-4 space-y-3">
-            {rows.map((row) => (
-              <li key={row.key} className="flex flex-wrap items-start gap-3">
-                <input
-                  className="money w-[8rem] rounded border border-rule bg-sheet px-2.5 py-1.5"
-                  name="deductionAmount"
-                  inputMode="decimal"
-                  placeholder="12,000"
-                  defaultValue={row.amount}
-                  aria-label="Amount deducted"
-                />
-                <input
-                  className="min-w-[12rem] flex-1 rounded border border-rule bg-sheet px-2.5 py-1.5"
-                  name="deductionReason"
-                  placeholder="Non-medical consumables"
-                  defaultValue={row.reason}
-                  aria-label="Reason given"
-                />
-                <button
-                  type="button"
-                  className="mt-1.5 text-[0.82rem] text-ink-faint underline decoration-rule hover:text-ink disabled:no-underline disabled:opacity-40"
-                  onClick={() => removeRow(row.key)}
-                  disabled={rows.length === 1}
-                >
-                  Remove
-                </button>
-              </li>
-            ))}
-          </ul>
+        <ul className="mt-4 space-y-3">
+          {rows.map((row) => (
+            <li key={row.key} className="flex flex-wrap items-start gap-3">
+              <input
+                className="money w-[8rem] rounded border border-rule bg-sheet px-2.5 py-1.5"
+                name="deductionAmount"
+                inputMode="decimal"
+                placeholder="12,000"
+                value={row.amount}
+                onChange={(event) => editRow(row.key, 'amount', event.target.value)}
+                aria-label="Amount deducted"
+              />
+              <input
+                className="min-w-[12rem] flex-1 rounded border border-rule bg-sheet px-2.5 py-1.5"
+                name="deductionReason"
+                placeholder="Non-medical consumables"
+                value={row.reason}
+                onChange={(event) => editRow(row.key, 'reason', event.target.value)}
+                aria-label="Reason given"
+              />
+              <button
+                type="button"
+                className="mt-1.5 text-[0.82rem] text-ink-faint underline decoration-rule hover:text-ink disabled:no-underline disabled:opacity-40"
+                onClick={() => removeRow(row.key)}
+                disabled={rows.length === 1}
+              >
+                Remove
+              </button>
+            </li>
+          ))}
+        </ul>
 
-          <button type="button" className="btn btn-quiet mt-4" onClick={addRow}>
-            Add another deduction
-          </button>
-        </fieldset>
-
-        {result && 'error' in result && (
-          <p className="mt-5 text-[0.88rem] text-amber">{result.error}</p>
-        )}
-        {result && 'ok' in result && (
-          <p className="mt-5 text-[0.88rem] text-ink-soft">Saved.</p>
-        )}
-
-        <button className="btn mt-6" type="submit" disabled={pending}>
-          {pending ? 'Recording' : settlement ? 'Update the settlement' : 'Record the settlement'}
+        <button type="button" className="btn btn-quiet mt-4" onClick={addRow}>
+          Add another deduction
         </button>
-      </form>
+      </fieldset>
 
-      {settlement && <ClearSettlement claimId={claimId} />}
-    </>
+      {result && 'error' in result && (
+        <p className="mt-5 text-[0.88rem] text-amber">{result.error}</p>
+      )}
+      {result && 'ok' in result && (
+        <p className="mt-5 text-[0.88rem] text-ink-soft">Saved.</p>
+      )}
+
+      <button className="btn mt-6" type="submit" disabled={pending}>
+        {pending
+          ? 'Recording'
+          : settlement
+            ? 'Update the settlement'
+            : 'Record the settlement'}
+      </button>
+    </form>
   )
 }
 

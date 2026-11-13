@@ -6,6 +6,7 @@ import {
   completeness,
   daysRemaining,
   dueDate,
+  isClosed,
   itemState,
   amountWithheld,
   deductionsTotal,
@@ -190,6 +191,15 @@ describe('status transitions', () => {
     for (const to of ALL_STATUSES) {
       expect(canTransition('settled', to)).toBe(false)
       expect(canTransition('rejected', to)).toBe(false)
+    }
+  })
+
+  it('closes exactly the statuses nothing leads out of', () => {
+    expect(isClosed('settled')).toBe(true)
+    expect(isClosed('rejected')).toBe(true)
+    for (const s of ALL_STATUSES) {
+      if (s === 'settled' || s === 'rejected') continue
+      expect(isClosed(s)).toBe(false)
     }
   })
 

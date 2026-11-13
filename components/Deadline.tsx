@@ -1,8 +1,25 @@
 import { connection } from 'next/server'
-import { daysRemaining, dueDate, type Claim } from '@/lib/claim'
+import { daysRemaining, dueDate, isClosed, type Claim } from '@/lib/claim'
 
 function longDate(d: Date) {
   return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'long' })
+}
+
+/**
+ * Once the insurer has answered, the window is history.
+ *
+ * A settled claim that still reads "5 days left to submit" is telling
+ * the family to hurry about something that is over. The claims list has
+ * always gone quiet at this point; the sheet says so too now, and in
+ * the past tense, because the date is still worth seeing on a claim
+ * someone is reading back later.
+ */
+function Closed({ claim }: { claim: Claim }) {
+  return (
+    <span className="text-ink-faint">
+      The submission window closed on {longDate(dueDate(claim))}
+    </span>
+  )
 }
 
 /**
@@ -10,6 +27,7 @@ function longDate(d: Date) {
  * of the sheet and is visible immediately.
  */
 export function DeadlineFallback({ claim }: { claim: Claim }) {
+  if (isClosed(claim.status)) return <Closed claim={claim} />
   return <>Submit by {longDate(dueDate(claim))}</>
 }
 
@@ -20,6 +38,10 @@ export function DeadlineFallback({ claim }: { claim: Claim }) {
  * there is a real request; everything around it is still static.
  */
 export async function DeadlineCountdown({ claim }: { claim: Claim }) {
+  // A closed claim needs no clock, so it does not wait for a request
+  // either: this branch stays in the prerendered shell.
+  if (isClosed(claim.status)) return <Closed claim={claim} />
+
   await connection()
   const days = daysRemaining(claim)
 
