@@ -7,9 +7,11 @@ import base from './playwright.config'
  * is different. Kept out of `npm run test:e2e` because it writes into
  * docs/ and proves nothing a test should be asked to prove.
  */
-export default {
+const screenshots = {
   ...base,
   testIgnore: undefined,
   testMatch: '**/tour.spec.ts',
   retries: 0,
 }
+
+export default screenshots
