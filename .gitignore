@@ -48,3 +48,6 @@ next-env.d.ts
 /blob-report
 /playwright/.cache
 .neon
+
+.vercel
+.env*
