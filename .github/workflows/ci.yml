@@ -51,13 +51,11 @@ jobs:
 
       - run: npm test
 
-      # A build with no database and no OAuth client, which is the point:
-      # nothing in the prerendered shell may depend on either. If a page
-      # starts reading the session or the database at build time, this
-      # fails here rather than in production.
+      # The connection string has to be present -- lib/db.ts refuses to
+      # start a production build without one -- but nothing is queried:
+      # a page that reads the session or the database at build time
+      # fails the prerender here rather than in production.
       - run: npm run build
-        env:
-          DATABASE_URL: ''
 
   e2e:
     runs-on: ubuntu-latest

@@ -4,9 +4,15 @@ A shared workspace where a family puts together one complete health-insurance
 reimbursement claim — built to work in the place the work actually happens: a
 hospital corridor with no signal.
 
-> **Status: in progress.** The offline core, the domain rules and the claim
-> sheet are built and tested. Auth and the database schema are in. Uploads,
-> export, reminders and the deploy are next; see [Where this is](#where-this-is).
+![The claim sheet: a ₹6,400 gap between the hospital bill and the receipts
+uploaded against it, above a ledger of the documents the insurer
+expects](docs/sheet.png)
+
+> **Status: feature-complete, not yet deployed.** Everything below is built
+> and tested — 238 unit and integration tests against a real Postgres, plus one
+> end-to-end run in a browser. The live link lands here once the Neon database
+> and the Google OAuth client exist; the deploy is a configuration step, not a
+> code one. See [Deploying](#deploying).
 
 ## The problem
 
@@ -64,7 +70,7 @@ every op against its own state rather than trusting the client's, hands out the
 sequence numbers clients page through, and is idempotent on op id — so swapping
 in an HTTP endpoint is a change of transport, not of design.
 
-With the app running:
+With the app running, at `/demo`:
 
 1. **Cut the signal** (the switch in the bottom bar) and add a pharmacy
    receipt. It lands on the sheet at once, the gap at the top moves, and the
@@ -81,6 +87,19 @@ With the app running:
    and the reply never arrives, so the client sends it again — and the receipt
    appears exactly once.
 
+## What is in it
+
+| | |
+|---|---|
+| **The cover sheet** | One claim per hospital stay. The gap between the final bill and the receipts against it is the single loud element on the page. |
+| **The ledger** | The documents the insurer expects, each with its files and amounts. An item can be ticked by hand, for a paper handed over at the desk that never existed as a file. |
+| **The family** | Invite by link, revoke a link, remove a member. Removal takes effect on every device immediately. |
+| **Uploads** | Straight from the phone to a private bucket, in a queue of their own so a 9 MB scan cannot hold up a tick. |
+| **Export** | The whole claim as one PDF: an index page first, giving the page each document starts on, then the documents in checklist order. |
+| **Settlement** | The insurer's letter, transcribed. What they withheld, less the deductions they named, is money that left the claim with no reason attached. |
+| **History** | Where the claim has been, and everything the family did to it, in the words written at the time. |
+| **Reminders** | A daily sweep emails the family a week out and two days out, unsubmitted claims only. |
+
 ## Stack
 
 | | |
@@ -89,8 +108,10 @@ With the app running:
 | Styling | Tailwind CSS 4 |
 | Database | Postgres (Neon) + Prisma 7 via the Neon HTTP driver adapter |
 | Auth | Auth.js (NextAuth v5) with Google, database sessions |
+| Files | Cloudflare R2, presigned uploads, signed short-lived views |
+| Email | Resend, from a Vercel Cron job |
 | Validation | Zod |
-| Tests | Vitest (112 and counting), Playwright for one end-to-end run |
+| Tests | Vitest (238, against a real Postgres) + one Playwright end-to-end run |
 | Deploy | Vercel |
 
 ## Access control
@@ -102,18 +123,27 @@ rule each route has to remember. Every route and server action resolves the
 current user to a membership first; a non-member gets a 404, not a 403, because
 confirming a claim exists is itself a leak.
 
+There is exactly one query in the codebase that is not scoped by membership,
+and it is named `claimForJob` so it can be found: the reminder sweep runs on a
+schedule with nobody asking, and turns what it reads into an email addressed to
+people who are already members.
+
 Sessions live in the database rather than in a JWT. A JWT costs no query per
 request but stays valid until it expires, and this app has one authorisation
 decision that has to take effect immediately: an owner removing a family
-member. With database sessions, revoking access is a delete.
+member. With database sessions, revoking access is a delete. It also means the
+end-to-end test can sign in by writing the row Auth.js would have written,
+instead of the app carrying a test-only back door.
 
 ## Private file storage
 
 Documents are medical records, so the bucket is private and nothing is ever
 served from it directly. The browser uploads straight to Cloudflare R2 with a
-**presigned URL** scoped to one key, and viewing a file mints a **short-lived
-signed URL**. File type (jpg, png, pdf) and size (max 10 MB) are validated on
-the server, where the limit cannot be edited by the person uploading.
+**presigned URL** scoped to one key, one content type and one exact length, and
+viewing a file mints a **two-minute signed URL**. File type (jpg, png, pdf) and
+size (max 10 MB) are validated on the server, where the limit cannot be edited
+by the person uploading. The server HEADs the bucket before it records that a
+file arrived.
 
 ## Running it locally
 
@@ -121,55 +151,81 @@ the server, where the limit cannot be edited by the person uploading.
 git clone https://github.com/Madhuuu7/claimkit.git
 cd claimkit
 npm install
-cp .env.example .env     # then fill it in, see below
+cp .env.example .env     # then fill it in
 npm run db:migrate       # create the schema
 npm run dev
 ```
 
-`.env` needs four values:
-
-| Variable | Where it comes from |
-|---|---|
-| `DATABASE_URL` | Neon's **pooled** connection string (host ends in `-pooler`) |
-| `AUTH_SECRET` | `npx auth secret` |
-| `AUTH_GOOGLE_ID` | Google Cloud → Credentials → OAuth client ID (Web application) |
-| `AUTH_GOOGLE_SECRET` | the same client |
+Only three values are needed to sign in and use the app: `DATABASE_URL`,
+`AUTH_SECRET` (`npx auth secret`) and a Google OAuth client. The rest of
+`.env.example` is optional and the app says so rather than breaking: with no
+R2, a chosen file stays on the phone and the claim still reconciles; with no
+Resend key, the reminder sweep runs and records what it would have sent.
 
 The Google client needs `http://localhost:3000/api/auth/callback/google` as an
 authorised redirect URI, and the deployed origin's equivalent in production.
 
-No database to hand? `npx prisma dev` runs a real Postgres locally; point
-`DATABASE_URL` at what it prints.
+No database to hand? `npx prisma dev --name claimkit` runs a real Postgres
+locally and prints the connection string. Two warnings, both paid for: use
+`connect_timeout=5` rather than the `0` it suggests, because zero means *wait
+forever* and a dead database then hangs the test suite instead of failing it;
+and it is an experimental SQLite-backed server that wedges under sustained
+load — still listening, resetting every connection — at which point restart it.
+Auth.js reports a dead database as *nobody is signed in*, so that is the first
+thing to suspect when the app offers to sign you in while the header already
+knows your name.
 
 ```bash
 npm test          # unit and integration tests
+npm run test:e2e  # the browser run; needs the app's database
 npm run lint
 npm run build
 ```
 
-## Where this is
+## Deploying
 
-Built and tested:
+The app is built for Vercel and carries its own cron schedule in
+`vercel.json`.
 
-- the operation log, conflict rules and validation (`lib/ops.ts`)
-- the durable IndexedDB outbox (`lib/outbox.ts`)
-- the sync engine: optimistic edits, rollback, retry with backoff, compaction
-  (`lib/engine.ts`)
-- the in-browser authoritative server and the switchable network (`lib/server.ts`)
-- reconciliation in paise, the deadline arithmetic and the status machine
-  (`lib/claim.ts`, `lib/money.ts`)
-- the claim sheet, the ledger, the conflict panel and the two-phone demo
-- the Postgres schema and Google sign-in
+1. Create a Neon database and run `npx prisma migrate deploy` against it. Use
+   the **pooled** connection string (the host ends in `-pooler`): a serverless
+   function is a process that lives for one request, and an unpooled host runs
+   out of connections long before it runs out of traffic. `lib/db.ts` picks
+   Neon's HTTP driver from the hostname, so nothing else changes.
+2. Create a Google OAuth client and add `https://<origin>/api/auth/callback/google`
+   as an authorised redirect URI.
+3. Set the environment variables from `.env.example` in the Vercel project.
+   `CRON_SECRET` is what the daily sweep checks; without it the endpoint
+   refuses every request in production.
+4. Deploy. The cron entry runs `/api/cron/reminders` at 03:30 UTC, which is
+   09:00 in India — a morning there rather than the middle of one.
 
-Still to come: claims and membership on the server, invite links, R2 uploads,
-the merged PDF export, deadline reminder emails, the settlement and deduction
-records, the activity log, the end-to-end test, and the live deploy with a
-sample claim.
+A new account is given a sample claim to look at: a six-day admission, most of
+its documents gathered, ₹6,400 unaccounted for. It is labelled as a sample
+above the claim, in the list and on the first page of the export, and it is an
+ordinary claim in the ordinary tables — every button on it does the real thing,
+and deleting it leaves nothing behind.
+
+## Tests
+
+```
+238 passing — lib/claim, money, ops, outbox, engine, sync, claims,
+settlement, family, history, reminders, sample, export, uploader
+```
+
+The access-control, sync and settlement suites run against a **real Postgres**,
+because what they test is not a function — it is whether the *queries* can
+reach another family's claim. A mocked Prisma client would answer a question
+nobody asked. Without `DATABASE_URL` they skip, so a contributor with no
+database can still run the unit tests; CI always has one.
+
+The single Playwright run creates a claim in the form, uploads a file, ticks a
+document off, checks that the tick reached Postgres rather than React state,
+and downloads the exported PDF.
 
 ## Not in scope
 
 OCR of bills, talking to insurer systems, payments.
 
-The live demo is seeded with one example claim using invented data, clearly
-marked as a sample. No real medical documents are in this repository or the
-demo.
+The sample claim uses invented data and is clearly marked. No real medical
+documents are in this repository or in the demo.
