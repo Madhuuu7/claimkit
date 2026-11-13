@@ -155,6 +155,7 @@ model Claim {
   activity     ActivityLog[]
   invites      Invite[]
   ops          Op[]
+  reminders    Reminder[]
 
   @@index([createdById])
 }
@@ -357,4 +358,34 @@ model Op {
   /// device belongs to a person, not to a claim.
   @@unique([claimId, opId])
   @@index([claimId, seq])
+}
+
+/// ---------------------------------------------------------------------
+/// Reminders
+///
+/// A row per reminder actually sent, which is what stops a cron that
+/// runs twice -- or a deploy that reruns it, or a retry after a timeout
+/// -- from emailing a family the same warning again. The unique index is
+/// the guard, not a check-then-write in application code: two invocations
+/// racing would both read "not sent yet".
+/// ---------------------------------------------------------------------
+
+model Reminder {
+  id      String @id @default(cuid())
+  claimId String
+
+  /// How many days before the deadline this one went out: 7 or 2.
+  daysBefore Int
+
+  /// How many addresses it reached. Zero is recorded too, because a
+  /// claim whose members have no email address on file is a thing worth
+  /// being able to see.
+  recipients Int @default(0)
+
+  sentAt DateTime @default(now())
+
+  claim Claim @relation(fields: [claimId], references: [id], onDelete: Cascade)
+
+  @@unique([claimId, daysBefore])
+  @@index([sentAt])
 }

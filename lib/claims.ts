@@ -479,3 +479,20 @@ export async function listMembers(
     documentCount: byUser.get(row.user.id) ?? 0,
   }))
 }
+
+/**
+ * A claim with no one asking for it.
+ *
+ * The single exception to the rule at the top of this file, and it is
+ * named to be greppable. The reminder job runs on a schedule with no
+ * session behind it, so there is no membership to scope the query by --
+ * it is not answering "may this person see this claim", it is answering
+ * "which claims are about to run out of time".
+ *
+ * Nothing it returns is ever sent to a browser. The job turns it into an
+ * email addressed to the people who are already members, and that is the
+ * only safe thing to do with it.
+ */
+export async function claimForJob(claimId: string): Promise<ClaimDetail | null> {
+  return prisma.claim.findUnique({ where: { id: claimId }, include: claimDetail })
+}
