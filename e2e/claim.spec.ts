@@ -148,18 +148,19 @@ test('a stranger is not told the claim exists', async ({ browser }) => {
   await context.addCookies([cookieFor(stranger.sessionToken)])
   const page = await context.newPage()
 
-  await page.goto(`/claims/${claim.id}`)
-
   // Not found, never forbidden: confirming the id is real would itself
   // be a leak -- it would turn a stolen link into proof that someone in
-  // that family is making a claim.
-  //
-  // The status line is 200 rather than 404, and has to be: the page is
-  // partially prerendered, so the shell is already on the wire before
-  // the membership check has run. The body is what a person and a
-  // crawler both read, and it says nothing about this claim.
-  await expect(page.getByText(/could not be found/i)).toBeVisible()
+  // that family is making a claim. The export route is the crisp place
+  // to read that answer, because a page under partial prerendering
+  // replies 200 with its shell before the membership check has run.
+  const refused = await page.request.get(`/api/claims/${claim.id}/export`)
+  expect(refused.status()).toBe(404)
+  expect(await refused.text()).not.toContain('Appa')
+
+  // And the claim itself shows them nothing.
+  await page.goto(`/claims/${claim.id}`)
   await expect(page.getByText('Appa, October')).toHaveCount(0)
+  await expect(page.getByText('Manipal Hospital')).toHaveCount(0)
 
   await context.close()
   await deleteUser(stranger.userId)

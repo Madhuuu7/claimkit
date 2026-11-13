@@ -30,6 +30,15 @@ declare module 'next-auth' {
 export const { handlers, auth, signIn, signOut } = NextAuth({
   adapter: PrismaAdapter(prisma),
   providers: [Google],
+  // Trust the Host header. Auth.js refuses to by default in production,
+  // because a forged Host would let an attacker aim the OAuth callback
+  // at their own origin -- and then every session read fails as
+  // UntrustedHost, which surfaces as everybody being signed out. It
+  // guesses right on Vercel and nowhere else, so running this anywhere
+  // else -- a container, CI, a production build on a laptop -- needs it
+  // said out loud. Safe here because the only deployments are behind a
+  // platform that sets Host itself.
+  trustHost: true,
   session: { strategy: 'database' },
   pages: { signIn: '/signin' },
   events: {
