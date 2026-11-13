@@ -3,6 +3,7 @@ import { itemState, uploadedTotal, type Claim } from './claim'
 import { demoClaim } from './demo'
 import {
   LamportClock,
+  MAX_LABEL,
   compareOps,
   replay,
   validateOp,
@@ -327,6 +328,216 @@ describe('validateOp', () => {
 
   it('refuses an illegal status move', () => {
     expect(add({ type: 'set_status', status: 'settled' })).toContain('cannot become settled')
+  })
+})
+
+describe('the checklist itself', () => {
+  const line = (id: string, label: string) => ({
+    id,
+    label,
+    kind: 'record' as const,
+    expected: 1,
+    required: true,
+  })
+
+  const labels = (claim: Claim) => claim.items.map((i) => i.label)
+
+  it('adds a line, and takes files into it straight away', () => {
+    // The point of minting the id on the phone: the add and the upload
+    // that follows it name the same line before any server has heard of
+    // either.
+    const { claim } = replay(demoClaim, [
+      op('a:1', 'a', 1, { type: 'add_item', item: line('x1', 'Pre-authorisation') }),
+      op('a:2', 'a', 2, { type: 'add_doc', itemId: 'x1', doc: receipt('n1', null) }),
+    ])
+
+    const added = claim.items.find((i) => i.id === 'x1')!
+    expect(added.label).toBe('Pre-authorisation')
+    expect(added.docs.map((d) => d.id)).toEqual(['n1'])
+    // Appended, never inserted: the checklist is the order of the
+    // exported PDF.
+    expect(claim.items[claim.items.length - 1].id).toBe('x1')
+  })
+
+  it('lists lines two phones added offline in the same order on both', () => {
+    const ops = [
+      op('a:1', 'a', 2, { type: 'add_item', item: line('x1', 'Pre-authorisation') }),
+      op('b:1', 'b', 1, { type: 'add_item', item: line('x2', 'Policy copy') }),
+      op('b:2', 'b', 3, { type: 'add_item', item: line('x3', 'Aadhaar') }),
+    ]
+    const forwards = replay(demoClaim, ops).claim
+    const backwards = replay(demoClaim, [...ops].reverse()).claim
+
+    expect(labels(backwards)).toEqual(labels(forwards))
+    expect(labels(forwards).slice(-3)).toEqual([
+      'Policy copy',
+      'Pre-authorisation',
+      'Aadhaar',
+    ])
+  })
+
+  it('applies an add once however many times it is delivered', () => {
+    const add = op('a:1', 'a', 1, { type: 'add_item', item: line('x1', 'Policy copy') })
+    const { claim } = replay(demoClaim, [add, add, { ...add }])
+    expect(claim.items.filter((i) => i.id === 'x1')).toHaveLength(1)
+  })
+
+  it('renames a line without touching what is in it', () => {
+    const { claim } = replay(demoClaim, [
+      op('a:1', 'a', 1, { type: 'rename_item', itemId: ITEM, label: 'Chemist bills' }),
+    ])
+    const renamed = claim.items.find((i) => i.id === ITEM)!
+    expect(renamed.label).toBe('Chemist bills')
+    expect(renamed.docs).toEqual(demoClaim.items.find((i) => i.id === ITEM)!.docs)
+  })
+
+  it('reports two people renaming the same line at once', () => {
+    // Neither write saw the other, so the later one wins the order and
+    // the earlier one is kept and shown. Silently discarding what
+    // someone typed is the thing this app refuses to do.
+    const { claim, conflicts } = replay(demoClaim, [
+      op('a:1', 'a', 1, { type: 'rename_item', itemId: ITEM, label: 'Chemist bills' }, null),
+      op('b:1', 'b', 2, { type: 'rename_item', itemId: ITEM, label: 'Medicine bills' }, null),
+    ])
+    expect(claim.items.find((i) => i.id === ITEM)!.label).toBe('Medicine bills')
+    expect(conflicts).toHaveLength(1)
+    expect(conflicts[0].register).toBe(`label:${ITEM}`)
+  })
+
+  it('treats a rename that saw the other rename as an ordinary edit', () => {
+    const { claim, conflicts } = replay(demoClaim, [
+      op('a:1', 'a', 1, { type: 'rename_item', itemId: ITEM, label: 'Chemist bills' }, null),
+      op('b:1', 'b', 2, { type: 'rename_item', itemId: ITEM, label: 'Medicine bills' }, 1),
+    ])
+    expect(claim.items.find((i) => i.id === ITEM)!.label).toBe('Medicine bills')
+    expect(conflicts).toEqual([])
+  })
+
+  it('takes a line off the checklist', () => {
+    const { claim } = replay(demoClaim, [
+      op('a:1', 'a', 1, { type: 'remove_item', itemId: 'i8' }),
+    ])
+    expect(claim.items.some((i) => i.id === 'i8')).toBe(false)
+    expect(claim.items).toHaveLength(demoClaim.items.length - 1)
+  })
+
+  it('keeps a line off when another phone renames it at the same time', () => {
+    // Whoever took it off meant to. A reconnecting phone must not put it
+    // back under a new name, whichever op happens to sort last.
+    const removeThenRename = replay(demoClaim, [
+      op('a:1', 'a', 1, { type: 'remove_item', itemId: 'i8' }),
+      op('b:1', 'b', 2, { type: 'rename_item', itemId: 'i8', label: 'Scripts' }),
+    ]).claim
+    const renameThenRemove = replay(demoClaim, [
+      op('b:1', 'b', 1, { type: 'rename_item', itemId: 'i8', label: 'Scripts' }),
+      op('a:1', 'a', 2, { type: 'remove_item', itemId: 'i8' }),
+    ]).claim
+
+    expect(removeThenRename.items.some((i) => i.id === 'i8')).toBe(false)
+    expect(renameThenRemove.items.some((i) => i.id === 'i8')).toBe(false)
+  })
+
+  it('removes a line the same phone added, with its files', () => {
+    const { claim } = replay(demoClaim, [
+      op('a:1', 'a', 1, { type: 'add_item', item: line('x1', 'Policy copy') }),
+      op('a:2', 'a', 2, { type: 'add_doc', itemId: 'x1', doc: receipt('n1', null) }),
+      op('a:3', 'a', 3, { type: 'remove_item', itemId: 'x1' }),
+    ])
+    expect(claim.items.some((i) => i.id === 'x1')).toBe(false)
+    expect(claim.items).toEqual(demoClaim.items)
+  })
+
+  it('converges whatever order checklist edits arrive in', () => {
+    const ops = [
+      op('a:1', 'a', 1, { type: 'add_item', item: line('x1', 'Policy copy') }),
+      op('b:1', 'b', 2, { type: 'rename_item', itemId: ITEM, label: 'Chemist bills' }, null),
+      op('a:2', 'a', 3, { type: 'remove_item', itemId: 'i8' }),
+      op('c:1', 'c', 4, { type: 'add_doc', itemId: 'x1', doc: receipt('n1', null) }),
+      op('b:2', 'b', 5, { type: 'rename_item', itemId: 'x1', label: 'Policy document' }),
+    ]
+    const forwards = replay(demoClaim, ops).claim
+    const backwards = replay(demoClaim, [...ops].reverse()).claim
+    const shuffled = replay(demoClaim, [ops[3], ops[1], ops[4], ops[0], ops[2]]).claim
+
+    expect(backwards).toEqual(forwards)
+    expect(shuffled).toEqual(forwards)
+    expect(forwards.items.find((i) => i.id === 'x1')!.label).toBe('Policy document')
+  })
+})
+
+describe('what the checklist refuses', () => {
+  const check = (body: OpBody, claim: Claim = demoClaim) =>
+    validateOp(claim, op('x', 'x', 1, body))
+
+  const line = (label: string, id = 'x1') => ({
+    id,
+    label,
+    kind: 'record' as const,
+    expected: null,
+    required: true,
+  })
+
+  it('accepts a line the insurer asked for', () => {
+    expect(check({ type: 'add_item', item: line('Pre-authorisation letter') })).toBeNull()
+  })
+
+  it('refuses a line with no name', () => {
+    expect(check({ type: 'add_item', item: line('   ') })).toContain('Give the document')
+  })
+
+  it('refuses a name too long to read on a phone', () => {
+    expect(check({ type: 'add_item', item: line('x'.repeat(MAX_LABEL + 1) ) })).toContain(
+      'under 80 characters',
+    )
+  })
+
+  it('refuses a second line with a name already on the checklist', () => {
+    // Two "Pharmacy bills" rows is how a family loses track of which one
+    // they put the receipts in. Case and padding do not make it a
+    // different document.
+    expect(check({ type: 'add_item', item: line('  pharmacy BILLS ') })).toContain(
+      'already a',
+    )
+  })
+
+  it('lets a line keep its own name when it is renamed to itself', () => {
+    const current = demoClaim.items.find((i) => i.id === ITEM)!.label
+    expect(check({ type: 'rename_item', itemId: ITEM, label: current })).toBeNull()
+  })
+
+  it('refuses a rename onto another line', () => {
+    const other = demoClaim.items.find((i) => i.id !== ITEM)!.label
+    expect(check({ type: 'rename_item', itemId: ITEM, label: other })).toContain('already a')
+  })
+
+  it('refuses a rename of a line that is no longer there', () => {
+    expect(check({ type: 'rename_item', itemId: 'gone', label: 'Anything' })).toContain(
+      'no longer on this claim',
+    )
+  })
+
+  it('refuses to take away a line that still holds files', () => {
+    // Documents cascade from their checklist item, so this would destroy
+    // the family's photographs of their bills. The sentence counts them
+    // and says what to do instead.
+    const refusal = check({ type: 'remove_item', itemId: ITEM })
+    expect(refusal).toContain('still holds')
+    expect(refusal).toContain('Remove')
+  })
+
+  it('allows a line that holds nothing to go', () => {
+    const empty = demoClaim.items.find((i) => i.docs.length === 0)!
+    expect(check({ type: 'remove_item', itemId: empty.id })).toBeNull()
+  })
+
+  it('refuses a second removal of the same line, which is what a retry is', () => {
+    expect(check({ type: 'remove_item', itemId: 'gone' })).toContain('already been removed')
+  })
+
+  it('refuses expecting no files at all', () => {
+    expect(
+      check({ type: 'add_item', item: { ...line('Policy copy'), expected: 0 } }),
+    ).toContain('at least one file')
   })
 })
 

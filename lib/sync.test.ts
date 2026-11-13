@@ -234,6 +234,94 @@ describe.skipIf(!hasDatabase)('pushing operations', () => {
     expect(fromLog.status).toBe(fromTables.status)
   })
 
+  it('adds, renames and removes a checklist line in the log and the tables', async () => {
+    const { id } = await freshClaim()
+    const mine = 'item-' + ++counter
+
+    const { results } = await pushOps(owner, id, [
+      op({
+        type: 'add_item',
+        item: {
+          id: mine,
+          label: 'Pre-authorisation letter',
+          kind: 'record',
+          expected: 1,
+          required: true,
+        },
+      }),
+      op({ type: 'rename_item', itemId: mine, label: 'Pre-authorisation' }),
+    ])
+
+    expect(results.every((r) => r.ok)).toBe(true)
+
+    const row = await prisma.checklistItem.findUnique({ where: { id: mine } })
+    expect(row).toMatchObject({ claimId: id, label: 'Pre-authorisation', kind: 'RECORD' })
+    // Appended, so the exported PDF keeps the insurer's order and the new
+    // line lands at the end of it.
+    const positions = await prisma.checklistItem.findMany({
+      where: { claimId: id },
+      orderBy: { position: 'desc' },
+      select: { id: true, position: true },
+    })
+    expect(positions[0].id).toBe(mine)
+
+    const removal = await pushOps(owner, id, [op({ type: 'remove_item', itemId: mine })])
+    expect(removal.results[0]).toMatchObject({ ok: true })
+    expect(await prisma.checklistItem.findUnique({ where: { id: mine } })).toBeNull()
+  })
+
+  it('refuses to take away a line holding files, and keeps the files', async () => {
+    // The database cascades documents from their checklist item, so this
+    // is the one refusal in the app standing between a tidy-up and a
+    // family's photographs of their bills.
+    const { id, pharmacyItemId } = await freshClaim()
+    const doc = receipt(3_000_00)
+    await pushOps(owner, id, [op({ type: 'add_doc', itemId: pharmacyItemId, doc })])
+
+    const { results } = await pushOps(owner, id, [
+      op({ type: 'remove_item', itemId: pharmacyItemId }),
+    ])
+
+    expect(results[0]).toMatchObject({ ok: false })
+    expect(results[0].ok === false && results[0].reason).toContain('still holds')
+    expect(await prisma.checklistItem.count({ where: { id: pharmacyItemId } })).toBe(1)
+    expect(await prisma.document.findUnique({ where: { id: doc.id } })).not.toBeNull()
+  })
+
+  it('keeps the log and the tables agreeing about the checklist itself', async () => {
+    const { id, pharmacyItemId, firstItemId } = await freshClaim()
+    const mine = 'item-' + ++counter
+    const emptyItem = (await getClaim(owner, id)).items.find(
+      (i) => i.documents.length === 0 && i.id !== firstItemId,
+    )!
+
+    await pushOps(owner, id, [
+      op({
+        type: 'add_item',
+        item: {
+          id: mine,
+          label: 'Policy copy',
+          kind: 'bill',
+          expected: null,
+          required: false,
+        },
+      }),
+      op({ type: 'add_doc', itemId: mine, doc: receipt(2_000_00) }),
+      op({ type: 'rename_item', itemId: pharmacyItemId, label: 'Chemist bills' }),
+      op({ type: 'remove_item', itemId: emptyItem.id }),
+    ])
+
+    const { fromTables, fromLog } = await replayedClaim(owner, id)
+    expect(fromLog.items.map((i) => [i.id, i.label, i.kind, i.required])).toEqual(
+      fromTables.items.map((i) => [i.id, i.label, i.kind, i.required]),
+    )
+    expect(uploadedTotal(fromLog)).toBe(uploadedTotal(fromTables))
+    expect(fromTables.items.some((i) => i.id === emptyItem.id)).toBe(false)
+    expect(fromTables.items.find((i) => i.id === pharmacyItemId)!.label).toBe(
+      'Chemist bills',
+    )
+  })
+
   it('hands a phone a snapshot and the log position it belongs to', async () => {
     const { id, pharmacyItemId } = await freshClaim()
     await pushOps(owner, id, [

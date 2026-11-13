@@ -4,6 +4,7 @@ import type { ReactNode } from 'react'
 import {
   blockers,
   completeness,
+  isClosed,
   settlementNote,
   uploadedTotal,
   unaccounted,
@@ -12,7 +13,7 @@ import {
 import type { EngineState, SyncEngine } from '@/lib/engine'
 import { formatRupees } from '@/lib/money'
 import type { Uploads } from '@/lib/uploads-client'
-import { AmountField, ItemRow } from './ItemRow'
+import { AddChecklistItem, AmountField, ItemRow } from './ItemRow'
 import { ConflictPanel, RolledBack } from './ConflictPanel'
 import { StatusControl } from './StatusControl'
 
@@ -217,6 +218,8 @@ export function Sheet({
             ))}
           </tbody>
         </table>
+
+        <AddChecklistItem engine={engine} />
       </section>
 
       {uploads && (
@@ -248,7 +251,7 @@ export function Sheet({
       {/* Plain sentences, worst first. No scores, no progress ring.
           Silent once the claim is settled or rejected: a list of things
           to fix before submitting is no longer advice, it is nagging. */}
-      {problems.length > 0 && claim.status !== 'settled' && claim.status !== 'rejected' && (
+      {problems.length > 0 && !isClosed(claim.status) && (
         <section className="mt-12">
           <h2 className="section-heading mb-4">Before you submit</h2>
           <ul className="space-y-2.5">

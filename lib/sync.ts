@@ -34,6 +34,23 @@ import {
  * receipt it is pricing may have been deleted by someone else.
  */
 
+/**
+ * A refusal discovered inside the transaction rather than before it.
+ *
+ * Validation runs against the claim as it was a moment ago, so a push
+ * that was legal when it was checked can stop being legal while it is
+ * being written -- someone on another phone adds a file to the very line
+ * this op removes. Thrown here, it aborts the transaction and comes back
+ * to the phone as an ordinary permanent refusal, which the client
+ * already knows how to roll back and explain.
+ */
+export class OpRefused extends Error {
+  constructor(reason: string) {
+    super(reason)
+    this.name = 'OpRefused'
+  }
+}
+
 export type PushOutcome =
   | { opId: string; ok: true; seq: number }
   /** Permanent: the client drops it, rolls it off the sheet and says why. */
@@ -166,6 +183,10 @@ export async function pushOps(
 
       results.push({ opId: op.id, ok: true, seq })
     } catch (error) {
+      if (error instanceof OpRefused) {
+        results.push({ opId: op.id, ok: false, reason: error.message })
+        continue
+      }
       // A unique violation here is the same op racing itself from two
       // tabs. Both callers should hear "accepted".
       if (isUniqueViolation(error)) {
@@ -265,6 +286,58 @@ async function applyToTables(
       return
     }
 
+    case 'add_item': {
+      // Appended, and positioned from the table rather than from the
+      // length of the list: removals leave gaps, and reusing a position
+      // would put the new line in the middle of the exported PDF.
+      const last = await tx.checklistItem.findFirst({
+        where: { claimId },
+        orderBy: { position: 'desc' },
+        select: { position: true },
+      })
+      await tx.checklistItem.create({
+        data: {
+          id: body.item.id,
+          claimId,
+          label: body.item.label,
+          kind: body.item.kind === 'bill' ? 'BILL' : 'RECORD',
+          expected: body.item.expected,
+          required: body.item.required,
+          position: (last?.position ?? -1) + 1,
+        },
+      })
+      return
+    }
+
+    case 'rename_item': {
+      await tx.checklistItem.updateMany({
+        where: { id: body.itemId, claimId },
+        data: { label: body.label },
+      })
+      return
+    }
+
+    case 'remove_item': {
+      // Documents cascade from their checklist item, so this delete is
+      // the one place in the app that could destroy a family's files
+      // without being asked to. Counted again inside the transaction,
+      // because validation ran against a claim from before this one:
+      // between the two, another phone's upload may have landed.
+      const holding = await tx.document.count({
+        where: { checklistItemId: body.itemId, claimId },
+      })
+      if (holding > 0) {
+        const item = claim.items.find((i) => i.id === body.itemId)
+        throw new OpRefused(
+          `${item?.label ?? 'That document'} was given ${holding} ${
+            holding === 1 ? 'file' : 'files'
+          } while this was waiting for signal, so it is still on the checklist.`,
+        )
+      }
+      await tx.checklistItem.deleteMany({ where: { id: body.itemId, claimId } })
+      return
+    }
+
     case 'set_status': {
       const to = STATUS_FROM_CLIENT[body.status]
       await tx.claim.update({ where: { id: claimId }, data: { status: to } })
@@ -291,12 +364,21 @@ export async function replayedClaim(
   const fromTables = toClientClaim(detail)
   const { ops } = await pullOps(userId, claimId, 0)
 
-  // The starting point: the claim with its documents and ticks stripped
-  // back out, which is what the log was recorded against.
+  // The starting point: the claim with everything the log is responsible
+  // for taken back off it -- the documents, the ticks, the status, and
+  // the checklist lines the family added for themselves. A line that was
+  // renamed keeps its current name, because the replay writes that name
+  // again from the rename op itself.
+  const addedItems = new Set(
+    ops.flatMap((op) => (op.body.type === 'add_item' ? [op.body.item.id] : [])),
+  )
+
   const base: ClientClaim = {
     ...fromTables,
     status: 'draft',
-    items: fromTables.items.map((item) => ({ ...item, markedDone: false, docs: [] })),
+    items: fromTables.items
+      .filter((item) => !addedItems.has(item.id))
+      .map((item) => ({ ...item, markedDone: false, docs: [] })),
   }
 
   return { fromTables, fromLog: replay(base, ops).claim }

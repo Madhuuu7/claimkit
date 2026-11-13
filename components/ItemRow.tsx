@@ -1,9 +1,15 @@
 'use client'
 
 import { useId, useState } from 'react'
-import { itemState, type ChecklistItem, type Claim } from '@/lib/claim'
+import {
+  itemState,
+  type ChecklistItem,
+  type Claim,
+  type DocumentKind,
+} from '@/lib/claim'
 import type { SyncEngine } from '@/lib/engine'
 import { MoneyError, formatRupees, parseRupees } from '@/lib/money'
+import { MAX_LABEL } from '@/lib/ops'
 import { refuseFile, type Uploads } from '@/lib/uploads-client'
 
 export function describeFiles(count: number, expected: number | null): string {
@@ -201,11 +207,242 @@ export function ItemRow({
                   {formatRupees(claim.finalBillPaise)}.
                 </p>
               )}
+
+              <ItemSettings item={item} engine={engine} onResult={setError} />
             </div>
           </td>
         </tr>
       )}
     </>
+  )
+}
+
+/**
+ * What this line of the checklist is called, and whether it belongs on
+ * it at all.
+ *
+ * The template is a starting guess; the real list is the one the
+ * family's insurer asked for. Both edits are ops like any other, so a
+ * line can be renamed with the radio off -- and a rename is a register,
+ * which means two people renaming the same line at once is reported to
+ * them instead of one of them quietly winning.
+ *
+ * Removal is the one edit in the app that can refuse. Documents cascade
+ * from their checklist item, so taking a line away that still holds
+ * files would destroy them; the engine says so in a sentence, and the
+ * sentence says what to do instead.
+ */
+function ItemSettings({
+  item,
+  engine,
+  onResult,
+}: {
+  item: ChecklistItem
+  engine: SyncEngine
+  onResult: (refusal: string | null) => void
+}) {
+  const [renaming, setRenaming] = useState(false)
+  const [label, setLabel] = useState(item.label)
+
+  const save = async () => {
+    const trimmed = label.trim()
+    if (trimmed === item.label) {
+      // Re-sending the name it already has would be a write every other
+      // phone has to take a view on, for nothing.
+      setRenaming(false)
+      return
+    }
+    const refusal = await engine.renameItem(item.id, trimmed)
+    onResult(refusal)
+    if (!refusal) setRenaming(false)
+  }
+
+  if (renaming) {
+    return (
+      <div className="flex flex-wrap items-center gap-2 border-t border-rule pt-3">
+        <input
+          aria-label={`Rename ${item.label}`}
+          className="min-w-0 flex-1 rounded border border-rule bg-sheet px-2 py-1 text-[0.92rem]"
+          value={label}
+          maxLength={MAX_LABEL}
+          autoFocus
+          onChange={(e) => setLabel(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') void save()
+            if (e.key === 'Escape') {
+              setLabel(item.label)
+              setRenaming(false)
+            }
+          }}
+        />
+        <button
+          type="button"
+          className="btn px-3 py-1 text-[0.88rem]"
+          onClick={() => void save()}
+        >
+          Rename
+        </button>
+        <button
+          type="button"
+          className="text-[0.82rem] text-ink-faint underline decoration-rule hover:text-ink"
+          onClick={() => {
+            setLabel(item.label)
+            setRenaming(false)
+          }}
+        >
+          Cancel
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-rule pt-3 text-[0.82rem]">
+      <button
+        type="button"
+        className="text-ink-faint underline decoration-rule hover:text-ink"
+        onClick={() => {
+          setLabel(item.label)
+          onResult(null)
+          setRenaming(true)
+        }}
+      >
+        Rename this document
+      </button>
+      <button
+        type="button"
+        className="text-ink-faint underline decoration-rule hover:text-amber"
+        onClick={() => void engine.removeItem(item.id).then(onResult)}
+      >
+        Take it off the checklist
+      </button>
+    </div>
+  )
+}
+
+/**
+ * A line the insurer asked for that the template never thought of.
+ *
+ * Closed until it is wanted, because the checklist is the thing being
+ * read on this screen and a form sitting open under it competes with
+ * every row above.
+ */
+export function AddChecklistItem({ engine }: { engine: SyncEngine }) {
+  const [open, setOpen] = useState(false)
+  const [label, setLabel] = useState('')
+  const [kind, setKind] = useState<DocumentKind>('record')
+  const [expected, setExpected] = useState('')
+  const [problem, setProblem] = useState<string | null>(null)
+  const kindId = useId()
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        className="btn btn-quiet mt-5"
+        onClick={() => setOpen(true)}
+      >
+        Add a document to the checklist
+      </button>
+    )
+  }
+
+  const close = () => {
+    setLabel('')
+    setExpected('')
+    setKind('record')
+    setProblem(null)
+    setOpen(false)
+  }
+
+  const submit = async () => {
+    let want: number | null = null
+    const typed = expected.trim()
+    if (typed !== '') {
+      const n = Number(typed)
+      if (!Number.isInteger(n) || n < 1) {
+        setProblem('Expect at least one file, or leave it blank')
+        return
+      }
+      want = n
+    }
+    const refusal = await engine.addItem({ label, kind, expected: want })
+    if (refusal) {
+      setProblem(refusal)
+      return
+    }
+    close()
+  }
+
+  return (
+    <div className="sheet mt-5 px-5 py-5">
+      <div className="flex flex-wrap items-end gap-3">
+        <label className="min-w-[12rem] flex-1">
+          <span className="block text-[0.82rem] text-ink-soft">
+            What the insurer asked for
+          </span>
+          <input
+            className="mt-1 w-full rounded border border-rule bg-sheet px-2 py-1 text-[0.92rem]"
+            placeholder="Pre-authorisation letter"
+            value={label}
+            maxLength={MAX_LABEL}
+            autoFocus
+            onChange={(e) => setLabel(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && void submit()}
+          />
+        </label>
+
+        <label>
+          <span className="block text-[0.82rem] text-ink-soft">Kind</span>
+          <select
+            id={kindId}
+            className="mt-1 rounded border border-rule bg-sheet px-2 py-1 text-[0.92rem]"
+            value={kind}
+            onChange={(e) => setKind(e.target.value as DocumentKind)}
+          >
+            <option value="record">A record</option>
+            <option value="bill">A bill</option>
+          </select>
+        </label>
+
+        <label className="w-[7rem]">
+          <span className="block text-[0.82rem] text-ink-soft">Files</span>
+          <input
+            className="mt-1 w-full rounded border border-rule bg-sheet px-2 py-1 text-right text-[0.92rem] tnum"
+            inputMode="numeric"
+            placeholder="any"
+            value={expected}
+            onChange={(e) => setExpected(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && void submit()}
+          />
+        </label>
+      </div>
+
+      <p className="mt-3 max-w-[34rem] text-[0.8rem] text-ink-faint">
+        A bill carries an amount and counts towards the final bill. A record does not --
+        a discharge summary has no rupee value. Leave the file count blank when it is
+        however many there turn out to be.
+      </p>
+
+      {problem && <p className="mt-3 text-[0.85rem] text-amber">{problem}</p>}
+
+      <div className="mt-4 flex items-center gap-4">
+        <button
+          type="button"
+          className="btn px-3 py-1 text-[0.88rem]"
+          onClick={() => void submit()}
+        >
+          Add it
+        </button>
+        <button
+          type="button"
+          className="text-[0.82rem] text-ink-faint underline decoration-rule hover:text-ink"
+          onClick={close}
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
   )
 }
 

@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { MoneyError, parseRupees } from './money'
+import type { OpBody } from './ops'
 
 /**
  * Every value that arrives from a browser passes through here.
@@ -163,7 +164,37 @@ export const opBodySchema = z.discriminatedUnion('type', [
       'rejected',
     ]),
   }),
+  z.object({
+    type: z.literal('add_item'),
+    item: z.object({
+      id: z.string().min(1).max(64),
+      // Only the shape is pinned here. Whether the name is blank, too
+      // long or already on the checklist is validateOp's question,
+      // because its answer is a sentence the family reads.
+      label: z.string().max(200),
+      kind: z.enum(['bill', 'record']),
+      expected: z.number().int().nullable(),
+      required: z.boolean(),
+    }),
+  }),
+  z.object({
+    type: z.literal('rename_item'),
+    itemId: z.string().min(1),
+    label: z.string().max(200),
+  }),
+  z.object({ type: z.literal('remove_item'), itemId: z.string().min(1) }),
 ])
+
+/**
+ * Checked by the compiler rather than by a test that someone has to
+ * remember to extend: every op the replay understands must be an op the
+ * endpoint will let in. Adding a body to OpBody without adding it above
+ * is a type error here, instead of an edit that works in every test and
+ * is refused as malformed by the first real phone.
+ */
+type _EveryOpBodyHasASchema = OpBody extends z.infer<typeof opBodySchema> ? true : never
+const _everyOpBodyHasASchema: _EveryOpBodyHasASchema = true
+void _everyOpBodyHasASchema
 
 export const opSchema = z.object({
   // `${deviceId}:${counter}`, minted by the device and used as the

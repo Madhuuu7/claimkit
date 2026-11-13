@@ -1,4 +1,4 @@
-import type { Claim, ClaimStatus, UploadedDoc } from './claim'
+import type { Claim, ClaimStatus, DocumentKind, UploadedDoc } from './claim'
 import type { Paise } from './money'
 import {
   LamportClock,
@@ -292,6 +292,42 @@ export class SyncEngine {
 
   setStatus(status: ClaimStatus): Promise<string | null> {
     return this.commit({ type: 'set_status', status })
+  }
+
+  /**
+   * The checklist itself is editable, because the real list comes from
+   * the letter the family's insurer sent and no template can know it.
+   *
+   * The id is minted here rather than by the server, which is what lets
+   * a line be added in a corridor and photographed into straight away:
+   * the add and the uploads that follow it name the same item, and the
+   * server meets them already agreeing.
+   */
+  addItem(item: {
+    label: string
+    kind: DocumentKind
+    expected?: number | null
+    required?: boolean
+    id?: string
+  }): Promise<string | null> {
+    return this.commit({
+      type: 'add_item',
+      item: {
+        id: item.id ?? this.newId(),
+        label: item.label.trim(),
+        kind: item.kind,
+        expected: item.expected ?? null,
+        required: item.required ?? true,
+      },
+    })
+  }
+
+  renameItem(itemId: string, label: string): Promise<string | null> {
+    return this.commit({ type: 'rename_item', itemId, label: label.trim() })
+  }
+
+  removeItem(itemId: string): Promise<string | null> {
+    return this.commit({ type: 'remove_item', itemId })
   }
 
   /**

@@ -31,6 +31,20 @@ import { formatRupees, type Paise } from './money'
  * Operations
  * ------------------------------------------------------------------ */
 
+/**
+ * A checklist line the family added themselves. It carries its own id,
+ * minted on the phone, so a line created in a corridor and the files put
+ * into it are talking about the same thing before the server has ever
+ * heard of either.
+ */
+export type NewChecklistItem = Pick<
+  ChecklistItem,
+  'id' | 'label' | 'kind' | 'expected' | 'required'
+>
+
+/** The longest label worth having on a line of the ledger. */
+export const MAX_LABEL = 80
+
 export type OpBody =
   | { type: 'add_doc'; itemId: string; doc: UploadedDoc }
   | { type: 'remove_doc'; itemId: string; docId: string }
@@ -38,6 +52,9 @@ export type OpBody =
   | { type: 'set_item_done'; itemId: string; done: boolean }
   | { type: 'set_final_bill'; amountPaise: Paise }
   | { type: 'set_status'; status: ClaimStatus }
+  | { type: 'add_item'; item: NewChecklistItem }
+  | { type: 'rename_item'; itemId: string; label: string }
+  | { type: 'remove_item'; itemId: string }
 
 export type Op = {
   /**
@@ -102,6 +119,10 @@ export function registerOf(body: OpBody): string | null {
       return 'finalBill'
     case 'set_status':
       return 'status'
+    case 'rename_item':
+      // A label is a single value, so two people renaming the same line
+      // at once is a disagreement to show, not a race to lose.
+      return 'label:' + body.itemId
     default:
       return null
   }
@@ -128,6 +149,8 @@ function registerValue(body: OpBody): unknown {
       return body.amountPaise
     case 'set_status':
       return body.status
+    case 'rename_item':
+      return body.label
     default:
       return null
   }
@@ -188,6 +211,12 @@ export function replay(
   const added = new Map<string, { itemId: string; doc: UploadedDoc }>()
   const removed = new Set<string>()
 
+  // Checklist lines work the same way. Insertion order is op order, and
+  // op order is the same on every device, so two phones that each added
+  // a line while offline end up listing those lines identically.
+  const addedItems = new Map<string, NewChecklistItem>()
+  const removedItems = new Set<string>()
+
   // Register state: the winning write per field, plus the losers.
   const winners = new Map<string, Op>()
   let conflicts: Conflict[] = []
@@ -216,6 +245,19 @@ export function replay(
         // receipt someone deleted must not come back when a phone
         // reconnects.
         removed.add(op.body.docId)
+      } else if (op.body.type === 'add_item') {
+        const { item } = op.body
+        if (base.items.some((i) => i.id === item.id) || addedItems.has(item.id)) {
+          dropped.push({ op, reason: 'That checklist item already exists' })
+          continue
+        }
+        addedItems.set(item.id, item)
+      } else if (op.body.type === 'remove_item') {
+        // Remove wins over a concurrent rename, for the same reason it
+        // wins over a concurrent add: whoever took the line off the
+        // checklist meant to, and a reconnecting phone must not put it
+        // back under a new name.
+        removedItems.add(op.body.itemId)
       }
       continue
     }
@@ -258,7 +300,18 @@ export function replay(
     return w && w.body.type === 'set_amount' ? w.body.amountPaise : fallback
   }
 
-  const items: ChecklistItem[] = base.items.map((item) => {
+  // The lines of the checklist: what the snapshot had, less what was
+  // taken off it, plus what the family added.
+  const present: ChecklistItem[] = [
+    ...base.items,
+    ...[...addedItems.values()].map((item) => ({
+      ...item,
+      markedDone: false,
+      docs: [] as UploadedDoc[],
+    })),
+  ].filter((item) => !removedItems.has(item.id))
+
+  const items: ChecklistItem[] = present.map((item) => {
     const docs = item.docs
       .filter((d) => !removed.has(d.id))
       .concat(
@@ -274,7 +327,13 @@ export function replay(
         ? doneWrite.body.done
         : item.markedDone
 
-    return { ...item, markedDone, docs }
+    const labelWrite = winners.get(`label:${item.id}`)
+    const label =
+      labelWrite && labelWrite.body.type === 'rename_item'
+        ? labelWrite.body.label
+        : item.label
+
+    return { ...item, label, markedDone, docs }
   })
 
   const billWrite = winners.get('finalBill')
@@ -382,7 +441,61 @@ export function validateOp(claim: Claim, op: Op): string | null {
       }
       return null
     }
+    case 'add_item': {
+      if (claim.items.some((i) => i.id === body.item.id)) {
+        return 'That checklist item has already been added'
+      }
+      return refuseLabel(claim, body.item.label, null) ?? refuseExpected(body.item.expected)
+    }
+    case 'rename_item': {
+      const item = claim.items.find((i) => i.id === body.itemId)
+      if (!item) return 'That document slot is no longer on this claim'
+      return refuseLabel(claim, body.label, item.id)
+    }
+    case 'remove_item': {
+      const item = claim.items.find((i) => i.id === body.itemId)
+      if (!item) return 'That document slot has already been removed'
+      // The files would go with it -- the database cascades. Destroying
+      // someone's photograph of a bill because a line was tidied off the
+      // checklist is not a tidy-up, so this is refused, and the sentence
+      // says what to do instead.
+      if (item.docs.length > 0) {
+        const n = item.docs.length
+        return `${item.label} still holds ${n} ${
+          n === 1 ? 'file' : 'files'
+        }. Remove ${n === 1 ? 'it' : 'them'} first, and the line can go.`
+      }
+      return null
+    }
   }
+}
+
+/**
+ * A label has to be worth reading, fit on a line, and not already be
+ * there: two "Pharmacy bills" rows are how a family loses track of which
+ * one they put the receipts in.
+ */
+function refuseLabel(
+  claim: Claim,
+  label: string,
+  exceptItemId: string | null,
+): string | null {
+  const trimmed = label.trim()
+  if (trimmed === '') return 'Give the document a name'
+  if (trimmed.length > MAX_LABEL) return `Keep the name under ${MAX_LABEL} characters`
+  const clash = claim.items.some(
+    (i) => i.id !== exceptItemId && i.label.trim().toLowerCase() === trimmed.toLowerCase(),
+  )
+  if (clash) return `There is already a ${trimmed} on this checklist`
+  return null
+}
+
+function refuseExpected(expected: number | null): string | null {
+  if (expected === null) return null
+  if (!Number.isInteger(expected) || expected < 1) {
+    return 'Expect at least one file, or leave it blank'
+  }
+  return null
 }
 
 /* ------------------------------------------------------------------ *
@@ -412,6 +525,14 @@ export function describeOp(op: Op, claim: Claim): string {
       return `set the final bill to ${formatRupees(body.amountPaise)}`
     case 'set_status':
       return `moved the claim to ${body.status.replace('_', ' ')}`
+    case 'add_item':
+      return `added ${body.item.label} to the checklist`
+    case 'rename_item':
+      // The old name as well as the new one: an activity line reading
+      // "renamed Pharmacy bills" tells nobody what it is called now.
+      return `renamed ${label(body.itemId)} to ${body.label}`
+    case 'remove_item':
+      return `took ${label(body.itemId)} off the checklist`
   }
 }
 
@@ -427,6 +548,8 @@ export function describeValue(op: Op, claim: Claim): string {
       return formatRupees(body.amountPaise)
     case 'set_status':
       return body.status.replace('_', ' ')
+    case 'rename_item':
+      return body.label
     default:
       return describeOp(op, claim)
   }
@@ -446,6 +569,8 @@ export function describeConflictSubject(conflict: Conflict, claim: Claim): strin
       return 'the final bill'
     case 'set_status':
       return 'the claim status'
+    case 'rename_item':
+      return 'what this document is called'
     default:
       return 'this claim'
   }

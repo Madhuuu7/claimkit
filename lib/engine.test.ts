@@ -422,6 +422,59 @@ describe('an idle phone', () => {
   })
 })
 
+describe('editing the checklist with no signal', () => {
+  it('adds a line and lets a file into it before anything is sent', async () => {
+    const { engine, network } = await harness()
+    network.online = false
+    engine.setOnline(false)
+
+    expect(
+      await engine.addItem({ label: 'Pre-authorisation letter', kind: 'record' }),
+    ).toBeNull()
+
+    const added = engine
+      .getState()
+      .claim.items.find((i) => i.label === 'Pre-authorisation letter')!
+    expect(added).toBeDefined()
+
+    // The id was minted on the phone, so the upload has something to
+    // name while the add is still in the outbox.
+    expect(await engine.addDocument(added.id, { name: 'preauth.pdf', amountPaise: null }))
+      .toBeNull()
+    expect(engine.getState().queued).toHaveLength(2)
+    expect(docsOf(engine.getState().claim, added.id)).toHaveLength(1)
+  })
+
+  it('refuses at the tap to take away a line holding files', async () => {
+    const { engine } = await harness()
+    // i5 is pharmacy bills, which the demo claim already has receipts in.
+    const refusal = await engine.removeItem(ITEM)
+    expect(refusal).toContain('still holds')
+    // Nothing queued, nothing moved: the refusal happened in the
+    // corridor rather than three hours later.
+    expect(engine.getState().queued).toEqual([])
+    expect(engine.getState().claim.items.some((i) => i.id === ITEM)).toBe(true)
+  })
+
+  it('renames a line and sends it when the signal comes back', async () => {
+    const { engine, network, server } = await harness()
+    network.online = false
+    engine.setOnline(false)
+
+    expect(await engine.renameItem(ITEM, 'Chemist bills')).toBeNull()
+    expect(engine.getState().claim.items.find((i) => i.id === ITEM)!.label).toBe(
+      'Chemist bills',
+    )
+
+    network.online = true
+    engine.setOnline(true)
+    await engine.sync()
+
+    expect(engine.getState().queued).toEqual([])
+    expect(server.claim.items.find((i) => i.id === ITEM)!.label).toBe('Chemist bills')
+  })
+})
+
 describe('bookkeeping', () => {
   it('tells the subscriber about every change, and nothing else', async () => {
     const { engine } = await harness()
