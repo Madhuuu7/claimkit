@@ -9,12 +9,15 @@ export default defineConfig({
     path: "prisma/migrations",
   },
   datasource: {
-    url: process.env["DATABASE_URL"],
-    // `prisma dev` hands out a database called template1, and Postgres
-    // copies template1 into every new database -- including the throwaway
-    // one a migration would be diffed against, which then already has
-    // every type and table in it. So the shadow database is named
-    // explicitly: `prisma dev` runs a second server for exactly this.
-    shadowDatabaseUrl: process.env["SHADOW_DATABASE_URL"],
+    // Migrations go direct, not through the pooler. A pooled connection
+    // multiplexes statements across sessions, and a migration wants one
+    // session holding one advisory lock from start to finish.
+    url: process.env["DATABASE_URL_UNPOOLED"] ?? process.env["DATABASE_URL"],
+    // Only set when running against `prisma dev`, which hands out a
+    // database called template1 -- and Postgres copies template1 into
+    // every new database, including the throwaway one a migration is
+    // diffed against, which then already has every table in it. Against
+    // Neon it is left unset and Prisma makes its own.
+    shadowDatabaseUrl: process.env["SHADOW_DATABASE_URL"] || undefined,
   },
 });

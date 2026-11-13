@@ -13,6 +13,13 @@ export default defineConfig({
     // connection" and looks like a bug in the code under test. The whole
     // suite runs in about a second either way.
     fileParallelism: false,
+    // Five seconds is plenty against a Postgres on localhost and not
+    // nearly enough against one in Singapore: these suites make dozens
+    // of round trips each, and at 60ms a trip the arithmetic stops
+    // working. The number is generous on purpose -- a test that is
+    // actually hung still fails, just later.
+    testTimeout: 30_000,
+    hookTimeout: 30_000,
     // The end-to-end run is Playwright's, and importing its spec here
     // fails on @playwright/test rather than running anything.
     exclude: ['e2e/**', 'node_modules/**', 'lib/generated/**'],
