@@ -17,6 +17,10 @@ const PORT = 3100
 
 export default defineConfig({
   testDir: './e2e',
+  // The screenshot tour is driven by , not by the
+  // test run: it writes files into docs/ and proves nothing a test
+  // should be asked to prove.
+  testIgnore: '**/tour.spec.ts',
   // These tests share one database and one claim each; running them in
   // parallel is possible but buys a second and costs the ability to
   // read the trace in order.

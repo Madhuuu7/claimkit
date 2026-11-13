@@ -59,13 +59,16 @@ function createAdapter(url: string) {
         // Neon in production takes the other branch and has no pool to
         // size: its driver sends each query over HTTP.
         //
-        // Three, released after five seconds. `prisma dev` advertises
-        // ten, but it is an experimental SQLite-backed server that wedges
-        // under churn -- still listening, resetting every connection --
-        // and the fewer sockets this holds, the longer it survives. A
-        // real Postgres, in CI or self-hosted, is happy with this too.
+        // Three connections. `prisma dev` advertises ten, but it is an
+        // experimental SQLite-backed server that closes sockets out from
+        // under the pool, and the fewer this holds the less often that
+        // happens. A real Postgres, in CI or self-hosted, is happy here.
         max: 3,
-        idleTimeoutMillis: 5_000,
+        // Half a second: a connection that has been sitting idle longer
+        // than that has probably already been closed by the server, and
+        // finding that out by sending a query is how a page ends up
+        // telling a signed-in person to sign in.
+        idleTimeoutMillis: 500,
       })
 }
 
