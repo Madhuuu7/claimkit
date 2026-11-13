@@ -225,6 +225,9 @@ export function Sheet({
           <a className="btn btn-quiet" href={`/claims/${claim.id}/settlement`}>
             {settlement ? 'Settlement' : 'Record a settlement'}
           </a>
+          <a className="btn btn-quiet" href={`/claims/${claim.id}/family`}>
+            The family
+          </a>
         </section>
       )}
 

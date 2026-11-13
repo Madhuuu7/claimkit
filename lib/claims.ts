@@ -394,3 +394,88 @@ export function toClientClaim(claim: ClaimDetail): ClientClaim {
     })),
   }
 }
+
+/**
+ * The invite links on this claim, newest first. Owner only, because the
+ * token *is* the link: showing it to a contributor would let anyone in
+ * the family hand the claim to anyone else.
+ *
+ * Revoked and expired links are returned too. They are what lets the
+ * family screen say "you revoked that one on Tuesday" rather than
+ * silently forgetting a link that may still be sitting in a chat.
+ */
+export type InviteSummary = {
+  id: string
+  token: string
+  createdAt: Date
+  expiresAt: Date
+  revokedAt: Date | null
+  live: boolean
+}
+
+export async function listInvites(
+  userId: string,
+  claimId: string,
+): Promise<InviteSummary[]> {
+  await requireOwner(userId, claimId)
+
+  const rows = await prisma.invite.findMany({
+    where: { claimId },
+    orderBy: { createdAt: 'desc' },
+    select: {
+      id: true,
+      token: true,
+      createdAt: true,
+      expiresAt: true,
+      revokedAt: true,
+    },
+  })
+
+  const now = new Date()
+  return rows.map((row) => ({
+    ...row,
+    live: row.revokedAt === null && row.expiresAt > now,
+  }))
+}
+
+/** The family, for the screen that manages it. Any member may look. */
+export type MemberSummary = {
+  userId: string
+  name: string
+  email: string | null
+  role: MemberRole
+  joinedAt: Date
+  documentCount: number
+}
+
+export async function listMembers(
+  userId: string,
+  claimId: string,
+): Promise<MemberSummary[]> {
+  await requireMembership(userId, claimId)
+
+  const rows = await prisma.claimMember.findMany({
+    where: { claimId },
+    orderBy: { joinedAt: 'asc' },
+    include: { user: { select: { id: true, name: true, email: true } } },
+  })
+
+  // What each of them actually added. The honest answer to "can I remove
+  // my cousin" is usually "they uploaded four of these files", and the
+  // screen should say so before the button is pressed.
+  const counts = await prisma.document.groupBy({
+    by: ['uploadedById'],
+    where: { claimId },
+    _count: { _all: true },
+  })
+  const byUser = new Map(counts.map((row) => [row.uploadedById, row._count._all]))
+
+  return rows.map((row) => ({
+    userId: row.user.id,
+    name: row.user.name ?? row.user.email ?? 'A family member',
+    email: row.user.email,
+    role: row.role,
+    joinedAt: row.joinedAt,
+    documentCount: byUser.get(row.user.id) ?? 0,
+  }))
+}
