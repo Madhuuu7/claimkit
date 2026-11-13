@@ -8,11 +8,14 @@ hospital corridor with no signal.
 uploaded against it, above a ledger of the documents the insurer
 expects](docs/sheet.png)
 
-> **Status: feature-complete, not yet deployed.** Everything below is built
-> and tested — 238 unit and integration tests against a real Postgres, plus one
-> end-to-end run in a browser. The live link lands here once the Neon database
-> and the Google OAuth client exist; the deploy is a configuration step, not a
-> code one. See [Deploying](#deploying).
+> **Live at [claimkit-sepia.vercel.app](https://claimkit-sepia.vercel.app).**
+> The [demo](https://claimkit-sepia.vercel.app/demo) needs no account: it runs
+> on invented data and lets you cut the signal yourself. Signing in is by
+> Google, and the OAuth client is still in Google's testing mode, so only
+> listed test accounts get past the consent screen. Behind it: 266 unit and
+> integration tests against a real Postgres, plus an end-to-end run in a
+> browser. File storage and reminder email are not configured on the live
+> deployment — see [Deploying](#deploying).
 
 ## The problem
 
@@ -111,7 +114,7 @@ With the app running, at `/demo`:
 | Files | Cloudflare R2, presigned uploads, signed short-lived views |
 | Email | Resend, from a Vercel Cron job |
 | Validation | Zod |
-| Tests | Vitest (238, against a real Postgres) + one Playwright end-to-end run |
+| Tests | Vitest (266, against a real Postgres) + one Playwright end-to-end run |
 | Deploy | Vercel |
 
 ## Access control
@@ -197,7 +200,8 @@ The app is built for Vercel and carries its own cron schedule in
 3. Set the environment variables from `.env.example` in the Vercel project.
    `CRON_SECRET` is what the daily sweep checks; without it the endpoint
    refuses every request in production.
-4. Deploy. The cron entry runs `/api/cron/reminders` at 03:30 UTC, which is
+4. Deploy. `vercel.json` pins the functions to `sin1`, beside the database
+   in Neon's Singapore region. The cron entry runs `/api/cron/reminders` at 03:30 UTC, which is
    09:00 in India — a morning there rather than the middle of one.
 
 A new account is given a sample claim to look at: a six-day admission, most of
@@ -209,7 +213,7 @@ and deleting it leaves nothing behind.
 ## Tests
 
 ```
-238 passing — lib/claim, money, ops, outbox, engine, sync, claims,
+266 passing — lib/claim, money, ops, outbox, engine, sync, claims,
 settlement, family, history, reminders, sample, export, uploader
 ```
 
