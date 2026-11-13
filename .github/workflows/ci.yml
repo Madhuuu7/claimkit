@@ -1,0 +1,113 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    # The access-control and sync suites run against a real Postgres,
+    # because what they test is whether the *queries* can reach another
+    # family's claim. A mocked client would answer a question nobody
+    # asked. Without DATABASE_URL they skip, so this service is the
+    # difference between 238 tests and about 80.
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: claimkit
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/claimkit
+      AUTH_SECRET: ci-only-not-a-real-secret
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      # postinstall runs `prisma generate`, so the generated client exists
+      # before anything type-checks against it.
+      - run: npm ci
+
+      - run: npm run lint
+
+      - run: npx tsc --noEmit
+
+      - run: npx prisma migrate deploy
+
+      - run: npm test
+
+      # A build with no database and no OAuth client, which is the point:
+      # nothing in the prerendered shell may depend on either. If a page
+      # starts reading the session or the database at build time, this
+      # fails here rather than in production.
+      - run: npm run build
+        env:
+          DATABASE_URL: ''
+
+  e2e:
+    runs-on: ubuntu-latest
+    needs: check
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: claimkit
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/claimkit
+      AUTH_SECRET: ci-only-not-a-real-secret
+      APP_URL: http://localhost:3100
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - run: npx prisma migrate deploy
+
+      # Google Chrome rather than the bundled Chromium, because that is
+      # what the config asks for: the machine this was written on refuses
+      # to launch Playwright's own download.
+      - run: npx playwright install --with-deps chrome
+
+      # The session is written straight into the Session table, so the
+      # end-to-end run needs no Google client -- it needs a database and
+      # a secret to sign the cookie with, and it has both.
+      - run: npm run test:e2e
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            playwright-report
+            test-results
+          retention-days: 7

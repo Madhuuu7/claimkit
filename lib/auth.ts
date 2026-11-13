@@ -1,4 +1,5 @@
 import 'server-only'
+import { connection } from 'next/server'
 import NextAuth, { type DefaultSession } from 'next-auth'
 import Google from 'next-auth/providers/google'
 import { PrismaAdapter } from '@auth/prisma-adapter'
@@ -64,6 +65,13 @@ export type CurrentUser = { id: string; name: string | null; email: string | nul
 
 /** The signed-in user, or null. Never throws, for pages that allow both. */
 export async function currentUser(): Promise<CurrentUser | null> {
+  // Says out loud that what follows is request-time work, and it is not
+  // a formality. Without it a page that reads the session can be
+  // prerendered and cached -- and then the signed-out version of the
+  // claims list is served to somebody who is signed in, which is what
+  // happened: the header said their name while the page underneath it
+  // invited them to sign in. At request time this costs nothing.
+  await connection()
   const session = await auth()
   if (!session?.user?.id) return null
   const { id, name = null, email = null, image = null } = session.user
