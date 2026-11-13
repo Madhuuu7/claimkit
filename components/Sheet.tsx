@@ -8,13 +8,13 @@ import {
   uploadedTotal,
   unaccounted,
   unexplainedWithholding,
-  STATUS_LABEL,
 } from '@/lib/claim'
 import type { EngineState, SyncEngine } from '@/lib/engine'
 import { formatRupees } from '@/lib/money'
 import type { Uploads } from '@/lib/uploads-client'
 import { AmountField, ItemRow } from './ItemRow'
 import { ConflictPanel, RolledBack } from './ConflictPanel'
+import { StatusControl } from './StatusControl'
 
 function longDate(iso: string) {
   return new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'long' })
@@ -90,7 +90,7 @@ export function Sheet({
       {/* The cover sheet: who, where, and the two numbers that decide
           whether this claim gets paid in full. */}
       <section className="sheet px-6 py-7 sm:px-9 sm:py-9">
-        <p className="text-[0.82rem] text-ink-soft">{STATUS_LABEL[claim.status]}</p>
+        <StatusControl claim={claim} engine={engine} />
         <h1 className="claim-title mt-1.5">{claim.patientName}</h1>
         <p className="mt-2.5 text-ink-soft">
           {claim.hospital}. Admitted {longDate(claim.admittedOn)}, discharged{' '}
@@ -227,6 +227,9 @@ export function Sheet({
           </a>
           <a className="btn btn-quiet" href={`/claims/${claim.id}/family`}>
             The family
+          </a>
+          <a className="btn btn-quiet" href={`/claims/${claim.id}/history`}>
+            History
           </a>
         </section>
       )}
