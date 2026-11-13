@@ -4,8 +4,10 @@ import type { ReactNode } from 'react'
 import {
   blockers,
   completeness,
+  settlementNote,
   uploadedTotal,
   unaccounted,
+  unexplainedWithholding,
   STATUS_LABEL,
 } from '@/lib/claim'
 import type { EngineState, SyncEngine } from '@/lib/engine'
@@ -63,6 +65,7 @@ export function Sheet({
   deadline: ReactNode
 }) {
   const { claim } = state
+  const settlement = claim.settlement ?? null
   const gap = unaccounted(claim)
   const uploaded = uploadedTotal(claim)
   const { done, total } = completeness(claim)
@@ -97,22 +100,41 @@ export function Sheet({
         <hr className="my-7 border-0 border-t border-rule" />
 
         <div className="flex flex-col gap-8 sm:flex-row sm:items-end sm:justify-between">
-          {/* The one place this design raises its voice. */}
-          <div>
-            <p
-              className="figure text-amber text-[clamp(2.6rem,1.6rem+3.4vw,3.6rem)]"
-              aria-describedby="gap-note"
-            >
-              {formatRupees(gap)}
-            </p>
-            <p id="gap-note" className="mt-2 max-w-[22rem] text-ink-soft">
-              {gap > 0
-                ? 'of the hospital bill still has no receipt against it'
-                : gap < 0
-                  ? 'more in receipts than the hospital billed'
-                  : 'every rupee on the bill has a receipt'}
-            </p>
-          </div>
+          {/* The one place this design raises its voice -- and what it
+              says changes once the insurer has answered. Before then the
+              question is which receipts are missing; after, it is how
+              much of the shortfall they never explained. */}
+          {settlement ? (
+            <div>
+              <p
+                className={`figure text-[clamp(2.6rem,1.6rem+3.4vw,3.6rem)] ${
+                  unexplainedWithholding(claim, settlement) === 0 ? 'text-ink' : 'text-amber'
+                }`}
+                aria-describedby="gap-note"
+              >
+                {formatRupees(settlement.settledAmountPaise)}
+              </p>
+              <p id="gap-note" className="mt-2 max-w-[22rem] text-ink-soft">
+                {settlementNote(claim, settlement)}
+              </p>
+            </div>
+          ) : (
+            <div>
+              <p
+                className="figure text-amber text-[clamp(2.6rem,1.6rem+3.4vw,3.6rem)]"
+                aria-describedby="gap-note"
+              >
+                {formatRupees(gap)}
+              </p>
+              <p id="gap-note" className="mt-2 max-w-[22rem] text-ink-soft">
+                {gap > 0
+                  ? 'of the hospital bill still has no receipt against it'
+                  : gap < 0
+                    ? 'more in receipts than the hospital billed'
+                    : 'every rupee on the bill has a receipt'}
+              </p>
+            </div>
+          )}
 
           <dl className="shrink-0 text-[0.92rem] sm:text-right">
             <div className="flex items-center justify-between gap-6 sm:justify-end">
@@ -187,7 +209,7 @@ export function Sheet({
       </section>
 
       {uploads && (
-        <section className="mt-8">
+        <section className="mt-8 flex flex-wrap gap-3">
           <a
             className="btn btn-quiet"
             href={`/api/claims/${claim.id}/export`}
@@ -197,11 +219,19 @@ export function Sheet({
           >
             Export as one PDF
           </a>
+          {/* A plain link, not a tab: recording a settlement happens once,
+              from a letter, with signal -- it does not belong on the
+              offline sheet. */}
+          <a className="btn btn-quiet" href={`/claims/${claim.id}/settlement`}>
+            {settlement ? 'Settlement' : 'Record a settlement'}
+          </a>
         </section>
       )}
 
-      {/* Plain sentences, worst first. No scores, no progress ring. */}
-      {problems.length > 0 && (
+      {/* Plain sentences, worst first. No scores, no progress ring.
+          Silent once the claim is settled or rejected: a list of things
+          to fix before submitting is no longer advice, it is nagging. */}
+      {problems.length > 0 && claim.status !== 'settled' && claim.status !== 'rejected' && (
         <section className="mt-12">
           <h2 className="section-heading mb-4">Before you submit</h2>
           <ul className="space-y-2.5">

@@ -7,10 +7,15 @@ import {
   daysRemaining,
   dueDate,
   itemState,
+  amountWithheld,
+  deductionsTotal,
+  settlementNote,
   unaccounted,
+  unexplainedWithholding,
   uploadedTotal,
   type Claim,
   type ClaimStatus,
+  type Settlement,
 } from './claim'
 import { demoClaim } from './demo'
 
@@ -223,5 +228,67 @@ describe('blockers', () => {
       })),
     }
     expect(blockers(ready)).toEqual([])
+  })
+})
+
+describe('settlement', () => {
+  const settled = (
+    settledAmountPaise: number,
+    deductions: { amountPaise: number; reason: string }[] = [],
+  ): Settlement => ({
+    settledAmountPaise,
+    settledAt: '2026-11-20T09:00:00Z',
+    deductions: deductions.map((d, i) => ({ id: `d${i}`, ...d })),
+  })
+
+  // The demo claim's final bill.
+  const bill = demoClaim.finalBillPaise
+
+  it('reports what the insurer kept', () => {
+    expect(amountWithheld(demoClaim, settled(bill - 18_000_00))).toBe(18_000_00)
+  })
+
+  it('subtracts the reasons the insurer was willing to give', () => {
+    const s = settled(bill - 18_000_00, [
+      { amountPaise: 12_000_00, reason: 'Non-medical consumables' },
+      { amountPaise: 2_000_00, reason: 'Room rent above eligibility' },
+    ])
+    expect(deductionsTotal(s)).toBe(14_000_00)
+    // The whole point of recording the letter: four thousand rupees
+    // left this claim with nothing written against it.
+    expect(unexplainedWithholding(demoClaim, s)).toBe(4_000_00)
+    expect(settlementNote(demoClaim, s)).toContain('₹4,000')
+  })
+
+  it('says so when every rupee withheld was explained', () => {
+    const s = settled(bill - 5_000_00, [{ amountPaise: 5_000_00, reason: 'Consumables' }])
+    expect(unexplainedWithholding(demoClaim, s)).toBe(0)
+    expect(settlementNote(demoClaim, s)).toContain('accounted for')
+  })
+
+  it('says so when nothing was withheld at all', () => {
+    expect(settlementNote(demoClaim, settled(bill))).toBe(
+      'settled in full, with nothing withheld',
+    )
+  })
+
+  it('reports reasons that overshoot what was actually withheld', () => {
+    // Not an error. A deduction the insurer later waived, or one counted
+    // twice, reads exactly like this, and both are worth querying.
+    const s = settled(bill - 1_000_00, [{ amountPaise: 3_000_00, reason: 'Consumables' }])
+    expect(unexplainedWithholding(demoClaim, s)).toBe(-2_000_00)
+    expect(settlementNote(demoClaim, s)).toContain('add up to ₹2,000 more')
+  })
+
+  it('is exact across a letter full of small deductions', () => {
+    // The reason money is paise and never a float: thirty deductions of
+    // ₹33.33 summed as rupees drift, and a reconciliation that drifts
+    // invents a grievance that is not there.
+    const each = 33_33
+    const s = settled(
+      bill - each * 30,
+      Array.from({ length: 30 }, () => ({ amountPaise: each, reason: 'Consumables' })),
+    )
+    expect(unexplainedWithholding(demoClaim, s)).toBe(0)
   })
 })

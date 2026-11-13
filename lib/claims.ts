@@ -93,7 +93,9 @@ const claimDetail = {
       },
     },
   },
-  deductions: true,
+  // Largest first: the letter lists them in its own order, but the
+  // family reads this to find the one worth arguing about.
+  deductions: { orderBy: { amountPaise: 'desc' } },
 } satisfies Prisma.ClaimInclude
 
 export type ClaimDetail = Prisma.ClaimGetPayload<{ include: typeof claimDetail }>
@@ -357,6 +359,18 @@ export function toClientClaim(claim: ClaimDetail): ClientClaim {
     finalBillPaise: claim.finalBillPaise,
     submissionWindowDays: claim.submissionWindowDays,
     status: STATUS_TO_CLIENT[claim.status],
+    settlement:
+      claim.settledAmountPaise === null || claim.settledAt === null
+        ? null
+        : {
+            settledAmountPaise: claim.settledAmountPaise,
+            settledAt: claim.settledAt.toISOString(),
+            deductions: claim.deductions.map((d) => ({
+              id: d.id,
+              amountPaise: d.amountPaise,
+              reason: d.reason,
+            })),
+          },
     members: claim.members.map((member) => ({
       id: member.user.id,
       name: member.user.name ?? member.user.email ?? 'A family member',

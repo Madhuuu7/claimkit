@@ -109,6 +109,8 @@ export const settlementSchema = z.object({
     .default([]),
 })
 
+export type SettlementInput = z.infer<typeof settlementSchema>
+
 /* ------------------------------------------------------------------ *
  * Operations
  *

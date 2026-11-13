@@ -2,7 +2,15 @@ import 'server-only'
 import type { Claim as ClientClaim } from './claim'
 import { STATUS_FROM_CLIENT, getClaim, requireMembership, toClientClaim } from './claims'
 import { prisma } from './db'
-import { describeOp, replay, validateOp, type Op } from './ops'
+import {
+  compareOps,
+  describeOp,
+  registerOf,
+  replay,
+  validateOp,
+  type Op,
+  type OpBody,
+} from './ops'
 
 /**
  * The server half of sync.
@@ -292,4 +300,72 @@ export async function replayedClaim(
   }
 
   return { fromTables, fromLog: replay(base, ops).claim }
+}
+
+/* ------------------------------------------------------------------ *
+ * Writing as the server
+ * ------------------------------------------------------------------ */
+
+/**
+ * Append an op the server itself made, as though it were one more device.
+ *
+ * Some things are not typed on a phone -- a settlement is transcribed
+ * from a letter, and a reminder job may one day want to say something.
+ * Those still have to reach the family's phones, and the only way into
+ * this claim is the log. Writing the `status` column directly would move
+ * the claim for whoever reloaded the page and for nobody else, and would
+ * put the tables and the log permanently out of step.
+ *
+ * So the server mints an op like any other: its own device id, the next
+ * Lamport clock, and `after` set to the clock of the value it is writing
+ * over, so a phone that changed the same field without seeing this is
+ * reported as a conflict rather than silently overwritten.
+ */
+export async function appendServerOp(
+  userId: string,
+  claimId: string,
+  body: OpBody,
+  by: string,
+): Promise<PushOutcome> {
+  await requireMembership(userId, claimId)
+
+  const rows = await prisma.op.findMany({
+    where: { claimId },
+    orderBy: { seq: 'asc' },
+    select: { opId: true, deviceId: true, clock: true, body: true },
+  })
+
+  // One past everything this claim has ever seen, which is what observing
+  // the whole log and then ticking amounts to.
+  const clock = rows.reduce((max, row) => Math.max(max, row.clock), 0) + 1
+
+  const register = registerOf(body)
+  const after =
+    register === null
+      ? null
+      : (rows
+          .filter((row) => registerOf(row.body as OpBody) === register)
+          .map((row) => ({
+            id: row.opId,
+            deviceId: row.deviceId,
+            clock: row.clock,
+          }))
+          .sort((a, b) => compareOps(a as Op, b as Op))
+          .pop()?.clock ?? null)
+
+  const op: Op = {
+    // Unique within the claim because the clock is one past every op in
+    // it, and two of these cannot be minted concurrently: the only
+    // caller holds the owner's claim for the length of the request.
+    id: `server:${clock}`,
+    deviceId: 'server',
+    by,
+    clock,
+    at: new Date().toISOString(),
+    after,
+    body,
+  }
+
+  const { results } = await pushOps(userId, claimId, [op])
+  return results[0]
 }

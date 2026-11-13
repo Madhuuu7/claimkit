@@ -63,6 +63,13 @@ export type Claim = {
   status: ClaimStatus
   members: { id: string; name: string; initials: string }[]
   items: ChecklistItem[]
+  /**
+   * Present only once the insurer has paid. Not part of the op log: a
+   * settlement is a record of what someone else did, transcribed from a
+   * letter by the owner, rather than a field the family edits between
+   * themselves on two phones.
+   */
+  settlement?: Settlement | null
 }
 
 export type ItemState = 'complete' | 'partial' | 'empty'
@@ -184,4 +191,74 @@ export const ALLOWED_TRANSITIONS: Record<ClaimStatus, ClaimStatus[]> = {
 
 export function canTransition(from: ClaimStatus, to: ClaimStatus): boolean {
   return ALLOWED_TRANSITIONS[from].includes(to)
+}
+
+/* ------------------------------------------------------------------ *
+ * Settlement
+ *
+ * The end of the story, and the part a family is least equipped to
+ * argue with. An insurer almost never pays the whole bill: it settles a
+ * figure and sends a letter listing what it took off. The letter's
+ * reasons and its arithmetic are two different things, and only the
+ * second can be checked.
+ *
+ * So ClaimKit records both and subtracts. What the insurer withheld,
+ * minus the deductions it was willing to name, is money that left the
+ * claim with no reason attached -- the one number worth taking back to
+ * them.
+ * ------------------------------------------------------------------ */
+
+export type Deduction = {
+  id: string
+  amountPaise: Paise
+  /** The insurer's wording, as the family read it off the letter. */
+  reason: string
+}
+
+export type Settlement = {
+  settledAmountPaise: Paise
+  /** ISO instant. Display only -- nothing is ordered by it. */
+  settledAt: string
+  deductions: Deduction[]
+}
+
+/** The difference between the hospital bill and what the insurer paid. */
+export function amountWithheld(claim: Claim, settlement: Settlement): Paise {
+  return claim.finalBillPaise - settlement.settledAmountPaise
+}
+
+/** The part of that the insurer gave a reason for. */
+export function deductionsTotal(settlement: Settlement): Paise {
+  return sum(settlement.deductions.map((d) => d.amountPaise))
+}
+
+/**
+ * Withheld, less the reasons given. Positive means the insurer kept
+ * money it has not explained; this is the figure to put in a grievance.
+ *
+ * Negative is possible and is not an error: the reasons add up to more
+ * than was actually withheld, which usually means a deduction was
+ * waived or double-counted, and is just as worth querying.
+ */
+export function unexplainedWithholding(claim: Claim, settlement: Settlement): Paise {
+  return amountWithheld(claim, settlement) - deductionsTotal(settlement)
+}
+
+/** The sentence under the settled figure. */
+export function settlementNote(claim: Claim, settlement: Settlement): string {
+  const withheld = amountWithheld(claim, settlement)
+  if (withheld === 0) return 'settled in full, with nothing withheld'
+
+  const unexplained = unexplainedWithholding(claim, settlement)
+  if (unexplained === 0) {
+    return `${formatRupees(withheld)} withheld, every rupee of it accounted for`
+  }
+  if (unexplained > 0) {
+    return `${formatRupees(withheld)} withheld, of which ${formatRupees(
+      unexplained,
+    )} has no reason against it`
+  }
+  return `${formatRupees(withheld)} withheld, but the reasons given add up to ${formatRupees(
+    -unexplained,
+  )} more`
 }

@@ -13,7 +13,8 @@ import {
   removeMember,
   revokeInvite,
 } from '@/lib/claims'
-import { createClaimSchema } from '@/lib/schemas'
+import { clearSettlement, recordSettlement, SettlementRefused } from '@/lib/settlement'
+import { createClaimSchema, settlementSchema } from '@/lib/schemas'
 
 /**
  * Server actions.
@@ -119,10 +120,72 @@ export async function acceptInviteAction(token: string): Promise<ActionResult> {
 }
 
 function messageFor(error: unknown): string {
+  // A refused settlement is arithmetic the family can fix: the letter
+  // says one thing and the deductions another, and the sentence saying
+  // so is the useful part.
+  if (error instanceof SettlementRefused) return error.message
   if (error instanceof NotPermitted) return error.message
   if (error instanceof InviteInvalid) return error.message
   // Including ClaimNotFound: someone who is not in the family is told
   // the same thing whether the claim is missing or merely not theirs.
   if (error instanceof ClaimNotFound) return error.message
   throw error
+}
+
+/* ------------------------------------------------------------------ *
+ * Settlement
+ * ------------------------------------------------------------------ */
+
+/**
+ * The letter from the insurer, typed in.
+ *
+ * The deductions arrive as two parallel lists, because that is what a
+ * repeated pair of inputs posts. Rows left entirely blank are dropped
+ * rather than rejected: the form always offers an empty row, and
+ * refusing to submit because of one is a form arguing with the person
+ * filling it in.
+ */
+export async function recordSettlementAction(
+  claimId: string,
+  _previous: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  const userId = await requireUserId()
+
+  const amounts = formData.getAll('deductionAmount').map(String)
+  const reasons = formData.getAll('deductionReason').map(String)
+  const rows = amounts
+    .map((amount, i) => ({ amountPaise: amount.trim(), reason: (reasons[i] ?? '').trim() }))
+    .filter((row) => row.amountPaise !== '' || row.reason !== '')
+
+  const parsed = settlementSchema.safeParse({
+    settledAmountPaise: formData.get('settledAmount'),
+    deductions: rows,
+  })
+
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? 'Check the figures and try again' }
+  }
+
+  try {
+    await recordSettlement(userId, claimId, parsed.data)
+  } catch (error) {
+    return { error: messageFor(error) }
+  }
+
+  revalidatePath(`/claims/${claimId}`)
+  revalidatePath(`/claims/${claimId}/settlement`)
+  return { ok: true }
+}
+
+export async function clearSettlementAction(claimId: string): Promise<ActionResult> {
+  const userId = await requireUserId()
+  try {
+    await clearSettlement(userId, claimId)
+  } catch (error) {
+    return { error: messageFor(error) }
+  }
+  revalidatePath(`/claims/${claimId}`)
+  revalidatePath(`/claims/${claimId}/settlement`)
+  return { ok: true }
 }
